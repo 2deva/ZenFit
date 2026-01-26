@@ -1,0 +1,8 @@
+{
+  "name": "Zenfit",
+  "description": "An agentic fitness companion powered by Gemini.",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation"
+  ]
+}
