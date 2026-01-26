@@ -387,7 +387,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     const userName = user?.displayName?.split(' ')[0];
 
     return (
-        <div className="flex-1 h-full relative">
+        // Mobile browsers with dynamic viewport sizing.
+        // `min-h-0` allows this flex child to shrink and keeps the input visible.
+        <div className="flex-1 min-h-0 relative">
             {/* Empty State - Premium Landing */}
             {filteredMessages.length === 0 && (
                 <div className="absolute inset-0 flex flex-col justify-center items-center px-4 sm:px-8 pb-28 sm:pb-36 z-10 pointer-events-none">
