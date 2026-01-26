@@ -69,7 +69,7 @@ ZenFit builds a `UserContext` that tracks more than just steps. It follows a **"
 
 ```mermaid
 graph TD
-    User((User)) <-->|Voice/Text| Gemini[Gemini 2.0 Flash]
+    User((User)) <-->|Voice/Text| Gemini[Gemini 2.5]
     Gemini <-->|Function Calls| Tools[Tool Manager]
     
     subgraph "The Agentic Loop"
@@ -80,10 +80,11 @@ graph TD
     end
     
     subgraph "Data Layer (Offline-First)"
-        Context <--> Sync[SyncService (Queue)]
+        Context <--> Sync["SyncService (Queue)"]
         Sync <--> Supabase[(Supabase DB)]
         Sync <--> Local[Local Storage]
     end
+
 ```
 
 ### ⚡ The "Offline-First" Sync Engine
