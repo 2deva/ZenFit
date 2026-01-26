@@ -86,7 +86,7 @@ export const GoalSelector: React.FC<GoalSelectorProps> = ({
           <p className="text-sm text-ink-400">Zen is thinking about your goals...</p>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-6 sm:mb-8 relative z-10">
+        <div className="grid grid-cols-1 min-[350px]:grid-cols-2 gap-3 sm:gap-4 mb-6 sm:mb-8 relative z-10">
           {displayOptions.map((option) => {
             const isSelected = selected.includes(option.id);
             const iconKey = option.icon.toLowerCase();

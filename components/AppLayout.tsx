@@ -54,6 +54,7 @@ export const AppLayout: React.FC = () => {
 
     const [isFocused, setIsFocused] = React.useState(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const inputContainerRef = useRef<HTMLDivElement>(null);
 
     const adjustTextareaHeight = () => {
         if (textareaRef.current) {
@@ -65,6 +66,20 @@ export const AppLayout: React.FC = () => {
     useEffect(() => {
         adjustTextareaHeight();
     }, [inputValue]);
+
+    // Mobile: Scroll input into view when focused
+    useEffect(() => {
+        if (isFocused && inputContainerRef.current) {
+            // Small delay to let keyboard appear
+            setTimeout(() => {
+                inputContainerRef.current?.scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'end',
+                    inline: 'nearest'
+                });
+            }, 300);
+        }
+    }, [isFocused]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -91,7 +106,7 @@ export const AppLayout: React.FC = () => {
     };
 
     return (
-        <div className="flex flex-col h-full bg-sand-50 relative overflow-hidden noise">
+        <div className="flex flex-col h-full min-h-0 bg-sand-50 relative overflow-hidden noise" style={{ height: '100dvh' }}>
 
             {/* Ambient Mesh Background */}
             <div className="absolute inset-0 mesh-bg-claude pointer-events-none"></div>
@@ -161,7 +176,7 @@ export const AppLayout: React.FC = () => {
 
 
             {/* Floating Input Capsule - Responsive */}
-            <div className="flex-none px-3 sm:px-4 pb-4 sm:pb-8 z-30 relative">
+            <div ref={inputContainerRef} className="flex-none px-3 sm:px-4 pb-4 sm:pb-8 z-30 relative" style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
                 {liveStatus === LiveStatus.DISCONNECTED ? (
                     <div
                         className={`

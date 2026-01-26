@@ -97,7 +97,7 @@ export const HabitHeatmap: React.FC<HabitHeatmapProps> = React.memo(({
                             {week.map((day) => (
                                 <div
                                     key={day.date}
-                                    className={`w-2 h-2 sm:w-3 sm:h-3 rounded-[2px] sm:rounded-sm border transition-all duration-200 hover:scale-125 ${getIntensityClass(day.value)}`}
+                                    className={`w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-[2px] sm:rounded-sm border transition-all duration-200 hover:scale-125 ${getIntensityClass(day.value)}`}
                                     title={`${day.date}: ${day.value > 0 ? `Level ${day.value}` : 'No activity'}`}
                                 />
                             ))}

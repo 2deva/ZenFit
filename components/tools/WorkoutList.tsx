@@ -637,7 +637,7 @@ export const WorkoutList: React.FC<WorkoutListProps> = ({
                     }`}
                 style={{
                     minHeight: 0,
-                    maxHeight: 'calc(85vh - 180px)', // Account for header height
+                    maxHeight: 'calc(85dvh - 180px)', // Account for header height
                     scrollBehavior: 'smooth'
                 }}
             >

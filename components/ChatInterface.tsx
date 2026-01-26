@@ -392,7 +392,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         <div className="flex-1 min-h-0 relative">
             {/* Empty State - Premium Landing */}
             {filteredMessages.length === 0 && (
-                <div className="absolute inset-0 flex flex-col justify-center items-center px-4 sm:px-8 pb-28 sm:pb-36 z-10 pointer-events-none">
+                <div className="absolute inset-0 flex flex-col justify-center items-center px-4 sm:px-8 pb-16 sm:pb-36 z-10 pointer-events-none">
                     <div className="pointer-events-auto w-full max-w-3xl mx-auto text-center">
 
                         {/* Personalized Greeting */}
