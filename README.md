@@ -2,7 +2,7 @@
 
 > **"Stop just planning your fitness goals. Start training with a personalized AI-powered coach that helps you stay consistent and truly achieve them."**
 
-![ZenFit Banner](https://img.shields.io/badge/Status-Checkpoint_2_Complete-success?style=for-the-badge) ![Tech Stack](https://img.shields.io/badge/Stack-React_|_Gemini_2.0_|_Supabase-blue?style=for-the-badge)
+![ZenFit Banner](https://img.shields.io/badge/Status-Checkpoint_2_Complete-success?style=for-the-badge) ![Tech Stack](https://img.shields.io/badge/Stack-React_|_Gemini_2.5_|_Supabase-blue?style=for-the-badge)
 
 **ZenFit** is the world's first **Psychology-First AI Fitness Agent**. Built with **Google Gemini 2.5 Flash** and **Gemini Live**, it transforms the standard "text-in, text-out" chatbot experience into a proactive, multimodal coaching session.
 
