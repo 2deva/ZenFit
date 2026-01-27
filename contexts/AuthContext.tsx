@@ -77,8 +77,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                 localStorage.setItem('google_oauth_token', (credential as any).accessToken || '');
             }
 
-        } catch (error) {
+        } catch (error: any) {
             console.error('Sign in failed:', error);
+            
+            // Provide helpful error message for unauthorized domain
+            if (error?.code === 'auth/unauthorized-domain') {
+                const currentDomain = window.location.hostname;
+                const errorMessage = `Authentication Error: This domain (${currentDomain}) is not authorized in Firebase. Please add it to Firebase Console → Authentication → Settings → Authorized domains.`;
+                console.error(errorMessage);
+                alert(errorMessage);
+            } else {
+                // For other errors, show a generic message
+                const errorMessage = error?.message || 'Failed to sign in. Please try again.';
+                console.error('Sign in error:', errorMessage);
+                alert(errorMessage);
+            }
+            
             throw error;
         } finally {
             setIsLoading(false);

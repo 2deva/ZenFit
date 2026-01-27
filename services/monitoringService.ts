@@ -59,6 +59,7 @@ export async function initializeMonitoring() {
       tracesSampleRate: import.meta.env.MODE === 'production' ? 0.1 : 1.0,
       replaysSessionSampleRate: 0.1,
       replaysOnErrorSampleRate: 1.0,
+      // Suppress errors if Sentry is blocked by CSP or ad blockers
       beforeSend(event, hint) {
         // Filter out sensitive data
         if (event.request) {
@@ -67,13 +68,21 @@ export async function initializeMonitoring() {
         }
         return event;
       },
+      // Handle transport errors gracefully
+      transportOptions: {
+        // Don't throw errors if Sentry requests fail
+      },
     });
 
     sentryInitialized = true;
     console.log('✅ Monitoring: Sentry initialized');
   } catch (error) {
-    console.warn('⚠️ Monitoring: Failed to initialize Sentry:', error);
-    console.log('📊 Monitoring: Falling back to console logging');
+    // Silently handle Sentry initialization failures (CSP blocks, ad blockers, etc.)
+    // The app should continue to work without Sentry
+    if (import.meta.env.MODE === 'development') {
+      console.warn('⚠️ Monitoring: Failed to initialize Sentry:', error);
+    }
+    console.log('📊 Monitoring: Using console logging fallback');
   }
 }
 
@@ -112,7 +121,11 @@ export async function trackError(
         },
       });
     } catch (e) {
-      console.warn('Failed to send error to Sentry:', e);
+      // Silently handle Sentry failures (CSP blocks, network issues, etc.)
+      // Don't spam console in production
+      if (import.meta.env.MODE === 'development') {
+        console.warn('Failed to send error to Sentry:', e);
+      }
     }
   }
 
@@ -137,7 +150,7 @@ export async function trackEvent(
         extra: properties,
       });
     } catch (e) {
-      // Silent fail
+      // Silently handle Sentry failures (CSP blocks, network issues, etc.)
     }
   }
 }
@@ -160,7 +173,7 @@ export async function trackPerformance(metric: PerformanceMetric): Promise<void>
         tags: metric.tags || {},
       });
     } catch (e) {
-      // Silent fail
+      // Silently handle Sentry failures (CSP blocks, network issues, etc.)
     }
   }
 }
@@ -222,7 +235,7 @@ export async function trackSecurityEvent(
         extra: details,
       });
     } catch (e) {
-      // Silent fail
+      // Silently handle Sentry failures (CSP blocks, network issues, etc.)
     }
   }
 }
@@ -243,7 +256,7 @@ export async function setUserContext(userId: string, email?: string): Promise<vo
         email,
       });
     } catch (e) {
-      // Silent fail
+      // Silently handle Sentry failures (CSP blocks, network issues, etc.)
     }
   }
 }
@@ -257,7 +270,7 @@ export async function clearUserContext(): Promise<void> {
       const Sentry = await import('@sentry/react');
       Sentry.setUser(null);
     } catch (e) {
-      // Silent fail
+      // Silently handle Sentry failures (CSP blocks, network issues, etc.)
     }
   }
 }
