@@ -1,30 +1,16 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { LogIn, LogOut, User, Loader2 } from 'lucide-react';
+import { User, Loader2 } from 'lucide-react';
 import { Button } from './ui/Button';
+import { ProfileDashboardModal } from './ProfileDashboardModal';
 
 interface AuthButtonProps {
     variant?: 'full' | 'compact';
 }
 
 export const AuthButton: React.FC<AuthButtonProps> = ({ variant = 'full' }) => {
-    const { user, isLoading, signInWithGoogle, signOut } = useAuth();
-    const [showMenu, setShowMenu] = useState(false);
-    const menuRef = useRef<HTMLDivElement>(null);
-
-    // Close menu when clicking outside
-    useEffect(() => {
-        const handleClickOutside = (event: MouseEvent) => {
-            if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-                setShowMenu(false);
-            }
-        };
-
-        if (showMenu) {
-            document.addEventListener('mousedown', handleClickOutside);
-        }
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, [showMenu]);
+    const { user, isLoading, signInWithGoogle } = useAuth();
+    const [showDashboard, setShowDashboard] = useState(false);
 
     if (isLoading) {
         return (
@@ -35,11 +21,11 @@ export const AuthButton: React.FC<AuthButtonProps> = ({ variant = 'full' }) => {
     }
 
     if (user) {
-        // Signed in state with dropdown menu
+        // Signed in state: clicking profile opens dashboard directly
         return (
-            <div className="relative" ref={menuRef}>
+            <div className="relative">
                 <button
-                    onClick={() => setShowMenu(!showMenu)}
+                    onClick={() => setShowDashboard(true)}
                     className="flex items-center space-x-1.5 sm:space-x-2 h-9 sm:h-10 px-2 sm:px-3 rounded-full bg-sand-100 hover:bg-sand-200 transition-colors border border-sand-200"
                     title={`Signed in as ${user.displayName}`}
                 >
@@ -59,25 +45,10 @@ export const AuthButton: React.FC<AuthButtonProps> = ({ variant = 'full' }) => {
                     )}
                 </button>
 
-                {/* Dropdown Menu */}
-                {showMenu && (
-                    <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-2xl shadow-lg border border-sand-200 py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-200">
-                        <div className="px-4 py-2 border-b border-sand-100">
-                            <p className="text-sm font-medium text-ink-800 truncate">{user.displayName}</p>
-                            <p className="text-xs text-ink-400 truncate">{user.email}</p>
-                        </div>
-                        <button
-                            onClick={() => {
-                                signOut();
-                                setShowMenu(false);
-                            }}
-                            className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-red-50 transition-colors group"
-                        >
-                            <LogOut className="w-4 h-4 text-ink-400 group-hover:text-red-500" />
-                            <span className="text-sm text-ink-600 group-hover:text-red-600">Sign out</span>
-                        </button>
-                    </div>
-                )}
+                <ProfileDashboardModal
+                    isOpen={showDashboard}
+                    onClose={() => setShowDashboard(false)}
+                />
             </div>
         );
     }

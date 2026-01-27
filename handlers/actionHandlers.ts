@@ -8,6 +8,7 @@ import { saveUserGoals, logWorkoutSession, getStreak, getRecentWorkouts, updateO
 import { ACTIONS, NUMBERS } from '../constants/app';
 import { Message, MessageRole } from '../types';
 import { v4 as uuidv4 } from 'uuid';
+import { generateAchievementBadgeProps, generateHabitHeatmapProps, generateChartProps } from '../services/toolIntegrationService';
 
 interface ActionHandlersOptions {
     userProfile: UserProfile;
@@ -121,6 +122,7 @@ export const createActionHandlers = (options: ActionHandlersOptions) => {
             const recentWorkouts = await getRecentWorkouts(supabaseUserId, NUMBERS.STREAK_TIMELINE_DAYS);
             const streakCount = streak?.current_streak || NUMBERS.DEFAULT_STREAK_COUNT;
             const longestStreak = streak?.longest_streak || streakCount;
+            const completedWorkouts = recentWorkouts.filter(w => w.completed).length;
 
             // Build days array for StreakTimeline
             const days = Array.from({ length: NUMBERS.STREAK_TIMELINE_DAYS }, (_, i) => {
@@ -128,16 +130,83 @@ export const createActionHandlers = (options: ActionHandlersOptions) => {
                 date.setDate(date.getDate() - (NUMBERS.STREAK_TIMELINE_DAYS - 1 - i));
                 const dateStr = date.toISOString().split('T')[0];
                 const hasWorkout = recentWorkouts.some(w =>
-                    new Date(w.created_at).toISOString().split('T')[0] === dateStr
+                    new Date(w.created_at).toISOString().split('T')[0] === dateStr && w.completed
                 );
                 return { date: dateStr, completed: hasWorkout };
             });
 
-            // Add celebration message
+            // Detect achievements
+            const achievements: Array<{ type: string; props: any }> = [];
+            
+            // First workout achievement
+            if (completedWorkouts === 1) {
+                const badgeProps = await generateAchievementBadgeProps('first_workout', supabaseUserId);
+                if (badgeProps.unlocked) {
+                    achievements.push({ type: 'first_workout', props: badgeProps });
+                }
+            }
+
+            // Streak milestones
+            if (streakCount === 7) {
+                const badgeProps = await generateAchievementBadgeProps('streak_7', supabaseUserId);
+                if (badgeProps.unlocked) {
+                    achievements.push({ type: 'streak_7', props: badgeProps });
+                }
+            } else if (streakCount === 14) {
+                const badgeProps = await generateAchievementBadgeProps('streak_14', supabaseUserId);
+                if (badgeProps.unlocked) {
+                    achievements.push({ type: 'streak_14', props: badgeProps });
+                }
+            } else if (streakCount === 30) {
+                const badgeProps = await generateAchievementBadgeProps('streak_30', supabaseUserId);
+                if (badgeProps.unlocked) {
+                    achievements.push({ type: 'streak_30', props: badgeProps });
+                }
+            }
+
+            // Workout count milestones
+            if (completedWorkouts === 10) {
+                const badgeProps = await generateAchievementBadgeProps('workouts_10', supabaseUserId);
+                if (badgeProps.unlocked) {
+                    achievements.push({ type: 'workouts_10', props: badgeProps });
+                }
+            } else if (completedWorkouts === 25) {
+                const badgeProps = await generateAchievementBadgeProps('workouts_25', supabaseUserId);
+                if (badgeProps.unlocked) {
+                    achievements.push({ type: 'workouts_25', props: badgeProps });
+                }
+            }
+
+            // Consistency achievement (5+ workouts in last week)
+            const weekWorkouts = recentWorkouts.filter(w => {
+                const workoutDate = new Date(w.created_at);
+                const daysAgo = Math.floor((Date.now() - workoutDate.getTime()) / (1000 * 60 * 60 * 24));
+                return daysAgo <= 7 && w.completed;
+            });
+            const uniqueDays = new Set(weekWorkouts.map(w => 
+                new Date(w.created_at).toISOString().split('T')[0]
+            )).size;
+            
+            if (uniqueDays === 5) {
+                const badgeProps = await generateAchievementBadgeProps('consistency_week', supabaseUserId);
+                if (badgeProps.unlocked) {
+                    achievements.push({ type: 'consistency_week', props: badgeProps });
+                }
+            }
+
+            // Build celebration message with streak timeline
+            let celebrationText = `🎉 **Amazing work!** You just crushed that ${data.workoutType} workout!\n\n`;
+            
+            if (achievements.length > 0) {
+                celebrationText += `**Achievement Unlocked!** 🏆\n\n`;
+            }
+            
+            celebrationText += `You've built a **${streakCount}-day streak** — every day you show up is another proof of your commitment. ${streakCount >= longestStreak ? "That's your best streak ever! 🏆" : `Your best is ${longestStreak} days — keep pushing!`}\n\nHere's your progress:`;
+
             const celebrationMsg: Message = {
                 id: uuidv4(),
                 role: MessageRole.MODEL,
-                text: `🎉 **Amazing work!** You just crushed that ${data.workoutType} workout!\n\nYou've built a **${streakCount}-day streak** — every day you show up is another proof of your commitment. ${streakCount >= longestStreak ? "That's your best streak ever! 🏆" : `Your best is ${longestStreak} days — keep pushing!`}\n\nHere's your progress:`,
+                text: celebrationText,
                 timestamp: Date.now(),
                 uiComponent: {
                     type: 'streakTimeline',
@@ -151,6 +220,42 @@ export const createActionHandlers = (options: ActionHandlersOptions) => {
             };
 
             setMessages((prev: Message[]) => [...prev, celebrationMsg]);
+
+            // Add achievement badges if any unlocked
+            for (const achievement of achievements) {
+                const achievementMsg: Message = {
+                    id: uuidv4(),
+                    role: MessageRole.MODEL,
+                    text: `🏆 **Achievement Unlocked!**\n\n${achievement.props.title}${achievement.props.description ? `\n${achievement.props.description}` : ''}`,
+                    timestamp: Date.now(),
+                    uiComponent: {
+                        type: 'achievementBadge',
+                        props: achievement.props
+                    }
+                };
+                setMessages((prev: Message[]) => [...prev, achievementMsg]);
+            }
+
+            // Proactively show habit heatmap if user has been active for 2+ weeks
+            if (completedWorkouts >= 10) {
+                const heatmapProps = await generateHabitHeatmapProps('workout', supabaseUserId, 12);
+                if (heatmapProps.data.length > 0) {
+                    const heatmapMsg: Message = {
+                        id: uuidv4(),
+                        role: MessageRole.MODEL,
+                        text: `Here's your activity pattern over the last 12 weeks. Consistency is key! 💪`,
+                        timestamp: Date.now(),
+                        uiComponent: {
+                            type: 'habitHeatmap',
+                            props: heatmapProps
+                        }
+                    };
+                    // Delay heatmap slightly to avoid overwhelming user
+                    setTimeout(() => {
+                        setMessages((prev: Message[]) => [...prev, heatmapMsg]);
+                    }, 2000);
+                }
+            }
         }
     };
 };

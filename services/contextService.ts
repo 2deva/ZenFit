@@ -320,14 +320,29 @@ function formatImportantContext(c: UnifiedContext): string {
         text += `\n[ONBOARDING] Stage: ${os.stage} | Psych: ${os.psychologicalState}`;
     }
 
-    // Memory (Goals & Streaks)
+    // Memory (Goals & Streaks) - Enhanced for tool integration
     if (c.memoryContext) {
         const mc = c.memoryContext;
         if (mc.goals.length > 0) {
             text += `\n[GOALS] ${mc.goals.map(g => g.label).join(', ')}`;
         }
         if (mc.streaks.length > 0) {
-            text += `\n[STREAKS] ${mc.streaks.map(s => `${s.habitType}: ${s.currentStreak}d`).join(', ')}`;
+            text += `\n[STREAKS] ${mc.streaks.map(s => `${s.habitType}: ${s.currentStreak}d (best: ${s.longestStreak}d)`).join(', ')}`;
+            // Highlight milestone streaks for achievement badges
+            mc.streaks.forEach(s => {
+                if (s.currentStreak === 7 || s.currentStreak === 14 || s.currentStreak === 30) {
+                    text += `\n[MILESTONE ALERT] ${s.habitType} streak at ${s.currentStreak} days - consider showing achievementBadge`;
+                }
+            });
+        }
+        if (mc.recentWorkouts && mc.recentWorkouts.length > 0) {
+            const completedCount = mc.recentWorkouts.filter(w => w.completed).length;
+            const totalCount = mc.recentWorkouts.length;
+            text += `\n[RECENT WORKOUTS] ${completedCount}/${totalCount} completed in last 3 days`;
+            // Suggest progress visualization if user has been active
+            if (completedCount >= 2) {
+                text += `\n[PROGRESS VISUALIZATION] User has ${completedCount} recent workouts - consider showing streakTimeline or habitHeatmap`;
+            }
         }
         if (mc.relevantMemories && mc.relevantMemories.length > 0) {
             text += `\n[MEMORIES] ${mc.relevantMemories.slice(0, 2).map(m => `"${m}"`).join('; ')}`;

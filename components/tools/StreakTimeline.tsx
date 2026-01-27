@@ -22,14 +22,14 @@ export const StreakTimeline: React.FC<StreakTimelineProps> = React.memo(({
     // Memoize timeline days to prevent recalculating on every render
     // Use stable fallback instead of Math.random()
     const timelineDays = useMemo(() => {
-        if (days.length > 0) return days.slice(-14);
+        if (days.length > 0) return days.slice(-12);
 
         // Generate stable fallback based on currentStreak (no randomness!)
-        return Array.from({ length: 14 }, (_, i) => {
+        return Array.from({ length: 12 }, (_, i) => {
             const date = new Date();
-            date.setDate(date.getDate() - (13 - i));
+            date.setDate(date.getDate() - (11 - i));
             // Mark the most recent `currentStreak` days as completed
-            const daysFromEnd = 13 - i;
+            const daysFromEnd = 11 - i;
             return {
                 date: date.toISOString().split('T')[0],
                 completed: daysFromEnd < currentStreak
@@ -52,7 +52,7 @@ export const StreakTimeline: React.FC<StreakTimelineProps> = React.memo(({
         , [timelineDays]);
 
     return (
-        <div className="bg-white/90 backdrop-blur-sm p-4 sm:p-6 rounded-3xl sm:rounded-4xl shadow-soft-lg w-full max-w-sm animate-slide-up-fade border border-sand-200 relative overflow-hidden">
+        <div className="bg-white/90 backdrop-blur-sm p-4 sm:p-6 rounded-3xl sm:rounded-4xl shadow-soft-lg w-full animate-slide-up-fade border border-sand-200 relative overflow-hidden">
 
             <div className="absolute top-0 right-0 w-32 sm:w-40 h-32 sm:h-40 bg-gradient-radial from-claude-200/30 to-transparent rounded-full blur-3xl -mr-12 sm:-mr-16 -mt-12 sm:-mt-16 pointer-events-none"></div>
 

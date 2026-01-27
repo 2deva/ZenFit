@@ -468,16 +468,27 @@ INSTRUCTION: Subtly encourage sign-in for personalization and progress tracking 
           systemContext += `\n\n[LONG-TERM MEMORY: STREAKS]`;
           mc.streaks.forEach(s => {
             systemContext += `\n- ${s.habitType}: ${s.currentStreak} days current (Best: ${s.longestStreak} days)`;
+            // Highlight milestone streaks for proactive visualization
+            if (s.currentStreak === 7 || s.currentStreak === 14 || s.currentStreak === 30) {
+              systemContext += ` ⭐ MILESTONE - Consider showing achievementBadge!`;
+            }
           });
-          systemContext += `\nINSTRUCTION: Celebrate streaks! If streak is 0 or broken, gently encourage restart.`;
+          systemContext += `\nINSTRUCTION: Celebrate streaks! Show streakTimeline after workouts. If streak is 0 or broken, gently encourage restart.`;
+          systemContext += `\nTOOL USAGE: When user asks about progress or after workout completion, use streakTimeline with habitName="${mc.streaks[0].habitType}", currentStreak=${mc.streaks[0].currentStreak}, longestStreak=${mc.streaks[0].longestStreak}`;
         }
 
         if (mc.recentWorkouts.length > 0) {
           systemContext += `\n\n[RECENT ACTIVITY]`;
+          const completedCount = mc.recentWorkouts.filter(w => w.completed).length;
           mc.recentWorkouts.forEach(w => {
             const status = w.completed ? '✓ Completed' : '✗ Incomplete';
             systemContext += `\n- ${w.type || 'Workout'} (${w.daysAgo === 0 ? 'Today' : `${w.daysAgo} days ago`}): ${status}`;
           });
+          systemContext += `\nTotal Completed: ${completedCount} workouts`;
+          // Suggest progress visualization if user has been active
+          if (completedCount >= 3) {
+            systemContext += `\nPROGRESS VISUALIZATION: User has ${completedCount} recent workouts - consider showing habitHeatmap (12 weeks) or chart (7 days) when they ask about progress.`;
+          }
         }
 
         if (mc.relevantMemories.length > 0) {

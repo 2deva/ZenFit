@@ -2,11 +2,13 @@ import React, { createContext, useContext, useRef, useState, useEffect, useCallb
 import { useAppContext } from './AppContext';
 import { useLiveSession } from '../hooks/useLiveSession';
 import { LiveStatus, Message, MessageRole, UIComponentData } from '../types';
-import { TIMING, TEXT } from '../constants/app';
+import { TIMING, TEXT, ACTIONS } from '../constants/app';
 import { v4 as uuidv4 } from 'uuid';
 import { setMessages as saveMessages } from '../services/storageService';
 import { refreshContext } from '../services/contextService';
 import { syncWorkoutProgressToCloud } from '../services/persistenceService';
+import { getStreak, getRecentWorkouts } from '../services/supabaseService';
+import { NUMBERS } from '../constants/app';
 
 interface LiveSessionContextType {
     liveStatus: LiveStatus;
@@ -43,7 +45,12 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
         activeWorkoutMessageId, setActiveWorkoutMessageId,
         activeWorkoutMessageIdRef,
         currentLiveModelMessageIdRef,
-        currentLiveUserMessageIdRef
+        currentLiveUserMessageIdRef,
+        handleActionWrapper,
+        userProfile,
+        setUserProfile,
+        onboardingState,
+        setOnboardingState
     } = useAppContext();
 
     const audioDataRef = useRef<Float32Array>(new Float32Array(0));
@@ -54,6 +61,9 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
     const modelTranscriptBufferRef = useRef<string>('');
     const pendingLiveMessageRef = useRef<string | null>(null);
     const timerActivityConfigRef = useRef<{ activityType: string; config: any } | null>(null);
+    
+    // Track workout completion to prevent duplicate handling
+    const workoutCompletionHandledRef = useRef<Set<string>>(new Set());
 
     // --- Callbacks for useLiveSession ---
 
@@ -213,6 +223,10 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
 
     // Placeholder ref for the hook's return value
     const isGuidanceActiveRef = useRef<boolean>(false);
+    
+    // Refs for live mode values (needed in callbacks before hook returns them)
+    const liveStatusRef = useRef<LiveStatus>(LiveStatus.DISCONNECTED);
+    const sendMessageToLiveRef = useRef<((text: string) => void) | null>(null);
 
     const getContextForLive = async () => {
         const localContext = getUserContext();
@@ -258,7 +272,7 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
         onError: handleLiveError,
         onReconnecting: () => console.log('Live session reconnecting...'),
         userId: supabaseUserId,
-        onGuidedActivityStart: (activityType, config) => {
+        onGuidedActivityStart: async (activityType, config) => {
             console.log(`Guided activity update [${activityType}]:`, config);
             if (activityType === 'workout' && config.exercises) {
                 const currentExerciseIndex = config.currentExerciseIndex ?? 0;
@@ -271,6 +285,10 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                         completedIndices.push(idx);
                     }
                 });
+
+                // DETECT WORKOUT COMPLETION (all exercises done)
+                const allExercisesCompleted = completedExercises.length >= config.exercises.length || 
+                    completedIndices.length >= config.exercises.length;
 
                 setCurrentWorkoutProgress({
                     title: config.title || TEXT.VOICE_WORKOUT_DEFAULT_TITLE,
@@ -306,6 +324,107 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                         completedIndices,
                         currentExerciseIndex
                     ).catch(console.warn);
+                }
+
+                // HANDLE WORKOUT COMPLETION IN LIVE MODE
+                // Use workout message ID as unique key to prevent duplicate handling
+                const workoutKey = activeWorkoutMessageIdRef.current || config.title || 'workout';
+                
+                if (allExercisesCompleted && supabaseUserId && handleActionWrapper && 
+                    !workoutCompletionHandledRef.current.has(workoutKey)) {
+                    
+                    // Mark as handled to prevent duplicates
+                    workoutCompletionHandledRef.current.add(workoutKey);
+                    
+                    // Calculate workout duration
+                    const startedAt = config.startedAt || (currentWorkoutProgress?.startedAt || Date.now());
+                    const durationSeconds = Math.floor((Date.now() - startedAt) / 1000);
+
+                    // Extract exercise data for completion handler
+                    const exerciseData = config.exercises.map((e: any) => ({
+                        name: e.name,
+                        reps: e.reps,
+                        duration: e.duration,
+                        restAfter: e.restAfter
+                    }));
+
+                    // Trigger workout completion handler (logs workout, updates streaks, shows achievements)
+                    await handleActionWrapper(ACTIONS.WORKOUT_COMPLETE, {
+                        workoutType: config.title || TEXT.VOICE_WORKOUT_DEFAULT_TITLE,
+                        durationSeconds,
+                        exercises: exerciseData
+                    });
+
+                    // ANNOUNCE ACHIEVEMENTS VERBALLY IN LIVE MODE
+                    // Use refs to access liveStatus and sendMessageToLive (they're returned from hook)
+                    const currentLiveStatus = liveStatusRef.current;
+                    const currentSendMessage = sendMessageToLiveRef.current;
+                    
+                    if (currentLiveStatus === LiveStatus.CONNECTED && currentSendMessage) {
+                        // Get updated streak and achievements
+                        const streak = await getStreak(supabaseUserId, 'workout');
+                        const recentWorkouts = await getRecentWorkouts(supabaseUserId, NUMBERS.STREAK_TIMELINE_DAYS);
+                        const streakCount = streak?.current_streak || NUMBERS.DEFAULT_STREAK_COUNT;
+                        const completedWorkouts = recentWorkouts.filter(w => w.completed).length;
+
+                        // Build verbal announcement
+                        let announcement = `Amazing work! You just completed your ${config.title || 'workout'}! `;
+                        
+                        // Announce streak
+                        if (streakCount > 0) {
+                            announcement += `You've built a ${streakCount}-day streak! `;
+                            if (streakCount === 7 || streakCount === 14 || streakCount === 30) {
+                                announcement += `That's a major milestone! `;
+                            }
+                        }
+
+                        // Detect and announce achievements
+                        const achievements: string[] = [];
+                        
+                        if (completedWorkouts === 1) {
+                            achievements.push('First Steps - You completed your first workout!');
+                        }
+                        if (streakCount === 7) {
+                            achievements.push('Week Warrior - 7-day streak achieved!');
+                        } else if (streakCount === 14) {
+                            achievements.push('Two Week Champion - 14-day streak achieved!');
+                        } else if (streakCount === 30) {
+                            achievements.push('Monthly Master - 30-day streak achieved!');
+                        }
+                        if (completedWorkouts === 10) {
+                            achievements.push('Tenacious - 10 workouts completed!');
+                        } else if (completedWorkouts === 25) {
+                            achievements.push('Quarter Century - 25 workouts completed!');
+                        }
+
+                        // Consistency check
+                        const weekWorkouts = recentWorkouts.filter(w => {
+                            const workoutDate = new Date(w.created_at);
+                            const daysAgo = Math.floor((Date.now() - workoutDate.getTime()) / (1000 * 60 * 60 * 24));
+                            return daysAgo <= 7 && w.completed;
+                        });
+                        const uniqueDays = new Set(weekWorkouts.map(w => 
+                            new Date(w.created_at).toISOString().split('T')[0]
+                        )).size;
+                        
+                        if (uniqueDays === 5) {
+                            achievements.push('Consistency Champion - 5 workouts this week!');
+                        }
+
+                        // Add achievement announcements
+                        if (achievements.length > 0) {
+                            announcement += `Achievement unlocked! ${achievements.join(' ')} `;
+                        }
+
+                        announcement += `Keep up the amazing work!`;
+
+                        // Send verbal announcement to live mode
+                        setTimeout(() => {
+                            if (currentSendMessage && liveStatusRef.current === LiveStatus.CONNECTED) {
+                                currentSendMessage(`[SPEAK]: ${announcement}`);
+                            }
+                        }, 1000); // Small delay to let completion handler finish
+                    }
                 }
             } else if (activityType === 'breathing' || activityType === 'meditation') {
                 const duration = config.duration || config.durationMinutes * 60 || (config.pattern ? config.pattern.cycles * 60 : 300);
@@ -343,16 +462,12 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
         activeWorkoutMessageId: activeWorkoutMessageId // This is reactive from context
     });
 
-    // Sync the ref 
+    // Sync refs for live mode values (needed in callbacks)
     useEffect(() => {
+        liveStatusRef.current = liveStatus;
+        sendMessageToLiveRef.current = sendMessageToLive;
         isGuidanceActiveRef.current = isGuidanceActive.current;
-    }, [isGuidanceActive.current]); // Tracking ref mutation is tricky, usually refs don't trigger re-render.
-    // However, `useLiveSession` forces re-renders on state changes. 
-    // We just need ensures our callbacks read the current value. 
-    // Since we used a ref for the hook return... wait.
-    // The `isGuidanceActive` returned from hook IS a ref. So we can just assign it or read it.
-    // `isGuidanceActiveRef` was my manual one. I should update it.
-    isGuidanceActiveRef.current = isGuidanceActive.current;
+    }, [liveStatus, sendMessageToLive, isGuidanceActive]);
 
 
     const handleActivityControl = useCallback((action: 'pause' | 'resume' | 'skip' | 'stop' | 'back') => {
@@ -492,6 +607,10 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
             setWorkoutProgress(null);
             stopGuidance();
             timerActivityConfigRef.current = null;
+            // Clear completion tracking when workout stops
+            if (activeWorkoutMessageIdRef.current) {
+                workoutCompletionHandledRef.current.delete(activeWorkoutMessageIdRef.current);
+            }
         }
     }, [activeTimer, workoutProgress, currentWorkoutProgress, setActiveTimer, setWorkoutProgress, setCurrentWorkoutProgress, pauseGuidance, resumeGuidance, startGuidanceForTimer, stopGuidance, liveStatus]);
 

@@ -11,10 +11,11 @@ import { createCalendarEvent } from '../services/calendarService';
 import { createActionHandlers, handleAction } from '../handlers/actionHandlers';
 import { clearAllStorage } from '../services/storageService';
 import { buildUserContext } from '../utils/contextBuilder';
-import { TIMING, UI_LIMITS, PATTERNS, TEXT } from '../constants/app';
+import { TIMING, UI_LIMITS, PATTERNS, TEXT, ACTIONS } from '../constants/app';
 import { supabase } from '../supabaseConfig';
 import { v4 as uuidv4 } from 'uuid';
 import { syncService } from '../services/syncService'; // Ensure singleton is active
+import { getDashboardSnapshot, type DashboardSnapshot } from '../services/toolIntegrationService';
 
 interface AppContextType {
     // Core Data
@@ -30,6 +31,10 @@ interface AppContextType {
     setFitnessStats: React.Dispatch<React.SetStateAction<FitnessStats | undefined>>;
     userLocation: { lat: number, lng: number } | undefined;
     setUserLocation: React.Dispatch<React.SetStateAction<{ lat: number, lng: number } | undefined>>;
+
+    // Unified Dashboard Snapshot (Profile popup + other surfaces)
+    dashboardSnapshot: DashboardSnapshot | null;
+    refreshDashboardSnapshot: (options?: { force?: boolean }) => Promise<DashboardSnapshot | null>;
 
     // Messages
     messages: Message[];
@@ -101,6 +106,8 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
     const [fitnessStats, setFitnessStats] = useState<FitnessStats | undefined>(undefined);
     const [userLocation, setUserLocation] = useState<{ lat: number, lng: number } | undefined>(undefined);
     const [lastMessageTime, setLastMessageTime] = useState<number>(Date.now());
+    const [dashboardSnapshot, setDashboardSnapshot] = useState<DashboardSnapshot | null>(null);
+    const dashboardSnapshotRef = useRef<DashboardSnapshot | null>(null);
 
     // --- UI State ---
     const [inputValue, setInputValue] = useState('');
@@ -139,6 +146,11 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
         activeWorkoutMessageIdRef.current = activeWorkoutMessageId;
     }, [activeWorkoutMessageId]);
 
+    // Keep a stable ref for snapshot to avoid refresh-loop re-renders
+    React.useEffect(() => {
+        dashboardSnapshotRef.current = dashboardSnapshot;
+    }, [dashboardSnapshot]);
+
 
     // --- Context Builders ---
     const getUserContext = useCallback((profileOverride?: UserProfile) => {
@@ -161,6 +173,32 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
             profileOverride
         });
     }, [userProfile, userLocation, fitnessStats, user, memoryContext, onboardingState, messages, lastMessageTime, activeTimer, currentWorkoutProgress, lastGeneratedWorkout, recentUIInteractions]);
+
+    const refreshDashboardSnapshot = useCallback(async (options?: { force?: boolean }) => {
+        if (!supabaseUserId) return null;
+
+        const force = !!options?.force;
+        const now = Date.now();
+        // Simple TTL to avoid refetch spam (popup open, rapid events, etc.)
+        const current = dashboardSnapshotRef.current;
+        if (!force && current && now - current.generatedAt < 60_000) {
+            return current;
+        }
+
+        const snapshot = await getDashboardSnapshot(supabaseUserId, fitnessStats);
+        setDashboardSnapshot(snapshot);
+        return snapshot;
+    }, [supabaseUserId, fitnessStats]);
+
+    // Keep snapshot aligned with auth lifecycle
+    React.useEffect(() => {
+        if (!supabaseUserId) {
+            setDashboardSnapshot(null);
+            return;
+        }
+        // Initial load (non-blocking)
+        refreshDashboardSnapshot({ force: true }).catch(console.warn);
+    }, [supabaseUserId, refreshDashboardSnapshot]);
 
     // --- Actions ---
     const clearHistory = async () => {
@@ -322,6 +360,11 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
 
         // For now, execute standard actions
         await handleAction(action, data, actionHandlers);
+
+        // Keep the unified dashboard snapshot in sync (text + live mode share this path)
+        if (supabaseUserId && (action === ACTIONS.WORKOUT_COMPLETE || action === ACTIONS.SAVE_GOALS)) {
+            refreshDashboardSnapshot({ force: true }).catch(console.warn);
+        }
     };
 
     const value = {
@@ -331,6 +374,8 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
         onboardingState, setOnboardingState,
         fitnessStats, setFitnessStats,
         userLocation, setUserLocation,
+        dashboardSnapshot,
+        refreshDashboardSnapshot,
 
         messages, setMessages,
         addMessageToChat,
