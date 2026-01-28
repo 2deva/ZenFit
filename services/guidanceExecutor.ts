@@ -70,6 +70,9 @@ export class GuidanceExecutor {
     private callbacks: GuidanceCallbacks | null = null;
     private paceMultiplier: number = 1.0;
     private progressInterval: NodeJS.Timeout | null = null;
+    // Short-lived 3‑2‑1‑Go countdown timers, tracked separately so they can be cancelled
+    // when the user pauses, skips, goes back, or the session stops/completes.
+    private countdownTimers: NodeJS.Timeout[] = [];
     
     // Adaptive pacing for rep-based exercises
     private repTimings: number[] = []; // Store timing between reps
@@ -154,8 +157,9 @@ export class GuidanceExecutor {
         this.status = 'paused';
         this.pauseTime = Date.now();
         
-        // Clear all scheduled timers
+        // Clear all scheduled timers (including countdowns)
         this.clearScheduledCues();
+        this.clearCountdownTimers();
         
         // Stop progress updates
         this.stopProgressUpdates();
@@ -244,8 +248,9 @@ export class GuidanceExecutor {
             return;
         }
 
-        // Clear current cues and reschedule from new exercise
+        // Clear any pending cues and countdowns and reschedule from new exercise
         this.clearScheduledCues();
+        this.clearCountdownTimers();
         
         // Find cues for next exercise
         const nextExerciseCues = this.cues.filter(c => c.exerciseIndex === this.currentExerciseIndex);
@@ -268,20 +273,31 @@ export class GuidanceExecutor {
             }, `Skipping to ${nextExercise.name}. Ready?`);
             
             // Countdown: 3, 2, 1, Go! - each sent separately with 1 second delay
-            setTimeout(() => {
-                this.callbacks?.onCue({ timing: 0, type: 'count', text: '3', priority: 'immediate' }, '3');
-            }, 1000);
-            setTimeout(() => {
-                this.callbacks?.onCue({ timing: 0, type: 'count', text: '2', priority: 'immediate' }, '2');
-            }, 2000);
-            setTimeout(() => {
-                this.callbacks?.onCue({ timing: 0, type: 'count', text: '1', priority: 'immediate' }, '1');
-            }, 3000);
-            setTimeout(() => {
-                this.callbacks?.onCue({ timing: 0, type: 'instruction', text: 'Go!', priority: 'immediate' }, 'Go!');
-                // Start timer after countdown completes
-                this.callbacks?.onTimerControl?.('start', this.currentExerciseIndex);
-            }, 4000);
+            this.clearCountdownTimers();
+            this.countdownTimers.push(
+                setTimeout(() => {
+                    if (this.status === 'active') {
+                        this.callbacks?.onCue({ timing: 0, type: 'count', text: '3', priority: 'immediate' }, '3');
+                    }
+                }, 1000),
+                setTimeout(() => {
+                    if (this.status === 'active') {
+                        this.callbacks?.onCue({ timing: 0, type: 'count', text: '2', priority: 'immediate' }, '2');
+                    }
+                }, 2000),
+                setTimeout(() => {
+                    if (this.status === 'active') {
+                        this.callbacks?.onCue({ timing: 0, type: 'count', text: '1', priority: 'immediate' }, '1');
+                    }
+                }, 3000),
+                setTimeout(() => {
+                    if (this.status === 'active') {
+                        this.callbacks?.onCue({ timing: 0, type: 'instruction', text: 'Go!', priority: 'immediate' }, 'Go!');
+                        // Start timer after countdown completes
+                        this.callbacks?.onTimerControl?.('start', this.currentExerciseIndex);
+                    }
+                }, 4000)
+            );
         }
         
         // Reschedule remaining cues if active
@@ -317,8 +333,9 @@ export class GuidanceExecutor {
         // Go back to previous exercise
         this.currentExerciseIndex--;
         
-        // Clear current cues and reschedule from previous exercise
+        // Clear any pending cues and countdowns and reschedule from previous exercise
         this.clearScheduledCues();
+        this.clearCountdownTimers();
         
         // Find cues for previous exercise
         const prevExerciseCues = this.cues.filter(c => c.exerciseIndex === this.currentExerciseIndex);
@@ -341,20 +358,31 @@ export class GuidanceExecutor {
             }, `Going back to ${prevExercise.name}. Let's do this again! Ready?`);
             
             // Countdown: 3, 2, 1, Go! - each sent separately with 1 second delay
-            setTimeout(() => {
-                this.callbacks?.onCue({ timing: 0, type: 'count', text: '3', priority: 'immediate' }, '3');
-            }, 1000);
-            setTimeout(() => {
-                this.callbacks?.onCue({ timing: 0, type: 'count', text: '2', priority: 'immediate' }, '2');
-            }, 2000);
-            setTimeout(() => {
-                this.callbacks?.onCue({ timing: 0, type: 'count', text: '1', priority: 'immediate' }, '1');
-            }, 3000);
-            setTimeout(() => {
-                this.callbacks?.onCue({ timing: 0, type: 'instruction', text: 'Go!', priority: 'immediate' }, 'Go!');
-                // Start timer after countdown completes
-                this.callbacks?.onTimerControl?.('start', this.currentExerciseIndex);
-            }, 4000);
+            this.clearCountdownTimers();
+            this.countdownTimers.push(
+                setTimeout(() => {
+                    if (this.status === 'active') {
+                        this.callbacks?.onCue({ timing: 0, type: 'count', text: '3', priority: 'immediate' }, '3');
+                    }
+                }, 1000),
+                setTimeout(() => {
+                    if (this.status === 'active') {
+                        this.callbacks?.onCue({ timing: 0, type: 'count', text: '2', priority: 'immediate' }, '2');
+                    }
+                }, 2000),
+                setTimeout(() => {
+                    if (this.status === 'active') {
+                        this.callbacks?.onCue({ timing: 0, type: 'count', text: '1', priority: 'immediate' }, '1');
+                    }
+                }, 3000),
+                setTimeout(() => {
+                    if (this.status === 'active') {
+                        this.callbacks?.onCue({ timing: 0, type: 'instruction', text: 'Go!', priority: 'immediate' }, 'Go!');
+                        // Start timer after countdown completes
+                        this.callbacks?.onTimerControl?.('start', this.currentExerciseIndex);
+                    }
+                }, 4000)
+            );
         }
         
         // Reschedule remaining cues if active
@@ -385,6 +413,10 @@ export class GuidanceExecutor {
      * Stop and complete the session
      */
     stop(): void {
+        // Prevent circular call: if already completed or completing, don't call complete() again
+        if (this.status === 'completed' || this.status === 'idle') {
+            return;
+        }
         this.complete();
     }
 
@@ -560,28 +592,31 @@ export class GuidanceExecutor {
         }, `Next up: ${nextExercise.name}. Ready?`);
         
         // Countdown: 3, 2, 1, Go! - each sent separately with 1 second delay
-        setTimeout(() => {
-            if (this.status === 'active') {
-                this.callbacks?.onCue({ timing: 0, type: 'count', text: '3', priority: 'immediate', exerciseIndex: this.currentExerciseIndex }, '3');
-            }
-        }, 1000);
-        setTimeout(() => {
-            if (this.status === 'active') {
-                this.callbacks?.onCue({ timing: 0, type: 'count', text: '2', priority: 'immediate', exerciseIndex: this.currentExerciseIndex }, '2');
-            }
-        }, 2000);
-        setTimeout(() => {
-            if (this.status === 'active') {
-                this.callbacks?.onCue({ timing: 0, type: 'count', text: '1', priority: 'immediate', exerciseIndex: this.currentExerciseIndex }, '1');
-            }
-        }, 3000);
-        setTimeout(() => {
-            if (this.status === 'active') {
-                this.callbacks?.onCue({ timing: 0, type: 'instruction', text: 'Go!', priority: 'immediate', exerciseIndex: this.currentExerciseIndex }, 'Go!');
-                // Start timer after countdown completes
-                this.callbacks?.onTimerControl?.('start', this.currentExerciseIndex);
-            }
-        }, 4000);
+        this.clearCountdownTimers();
+        this.countdownTimers.push(
+            setTimeout(() => {
+                if (this.status === 'active') {
+                    this.callbacks?.onCue({ timing: 0, type: 'count', text: '3', priority: 'immediate', exerciseIndex: this.currentExerciseIndex }, '3');
+                }
+            }, 1000),
+            setTimeout(() => {
+                if (this.status === 'active') {
+                    this.callbacks?.onCue({ timing: 0, type: 'count', text: '2', priority: 'immediate', exerciseIndex: this.currentExerciseIndex }, '2');
+                }
+            }, 2000),
+            setTimeout(() => {
+                if (this.status === 'active') {
+                    this.callbacks?.onCue({ timing: 0, type: 'count', text: '1', priority: 'immediate', exerciseIndex: this.currentExerciseIndex }, '1');
+                }
+            }, 3000),
+            setTimeout(() => {
+                if (this.status === 'active') {
+                    this.callbacks?.onCue({ timing: 0, type: 'instruction', text: 'Go!', priority: 'immediate', exerciseIndex: this.currentExerciseIndex }, 'Go!');
+                    // Start timer after countdown completes
+                    this.callbacks?.onTimerControl?.('start', this.currentExerciseIndex);
+                }
+            }, 4000)
+        );
     }
     
     /**
@@ -802,6 +837,12 @@ export class GuidanceExecutor {
         this.scheduledCues = [];
     }
     
+    /** Clear any pending 3‑2‑1‑Go countdown timers */
+    private clearCountdownTimers(): void {
+        this.countdownTimers.forEach(id => clearTimeout(id));
+        this.countdownTimers = [];
+    }
+    
     /**
      * Reschedule remaining cues for current exercise when adaptive pacing changes
      */
@@ -929,6 +970,7 @@ export class GuidanceExecutor {
     private complete(): void {
         this.status = 'completed';
         this.clearScheduledCues();
+        this.clearCountdownTimers();
         this.stopProgressUpdates();
         
         // Mark last exercise complete

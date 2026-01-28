@@ -120,9 +120,26 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                 userTranscriptBufferRef.current = '';
             }
 
-            modelTranscriptBufferRef.current += text;
+            // Gemini Live streams partial chunks that sometimes omit whitespace at boundaries.
+            // Join chunks with a space only when needed to avoid "wordsstucktogether".
+            const incoming = text || '';
+            const existing = modelTranscriptBufferRef.current || '';
+            if (!existing) {
+                modelTranscriptBufferRef.current = incoming;
+            } else if (!incoming) {
+                // no-op
+            } else {
+                const lastChar = existing.slice(-1);
+                const firstChar = incoming[0];
+                const needsSpace =
+                    !/\s/.test(lastChar) &&
+                    !/[\s.,!?;:)\]]/.test(firstChar) &&
+                    !/[(\[]/.test(firstChar);
+                modelTranscriptBufferRef.current = existing + (needsSpace ? ' ' : '') + incoming;
+            }
 
-            const guidanceActive = isGuidanceActiveRef.current;
+            // Use isGuidanceActive.current directly from hook instead of synced ref for immediate updates
+            const guidanceActive = isGuidanceActive.current;
             const workoutMsgId = activeWorkoutMessageIdRef.current;
 
             if (currentLiveModelMessageIdRef.current) {
@@ -160,6 +177,8 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                 setMessages(prev => [...prev, newMessage]);
             }
         }
+    // NOTE: Don't include `isGuidanceActive` in deps here (it's a ref and declared later),
+    // and referencing it in the deps array would hit TDZ / "used before declaration".
     }, [setMessages, activeWorkoutMessageIdRef, currentLiveModelMessageIdRef, currentLiveUserMessageIdRef]);
 
     const handleLiveToolCall = useCallback((component: UIComponentData) => {
@@ -192,7 +211,7 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
 
                 if (component.type === 'timer' && component.props) {
                     const label = component.props.label || '';
-                    const duration = component.props.duration || 300;
+                    const duration = component.props.duration ?? 60;
                     const isBreathing = label.toLowerCase().includes('breathing') || label.toLowerCase().includes('breath');
                     const isMeditation = label.toLowerCase().includes('meditation') || label.toLowerCase().includes('mindful');
 
@@ -511,11 +530,21 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                     const newStartTime = Date.now() - (durationMs - remaining);
                     return { ...prev, isRunning: true, startedAt: newStartTime, remainingAtPause: undefined };
                 });
-                if (timerActivityConfigRef.current && liveStatus === LiveStatus.CONNECTED) {
-                    const { activityType, config } = timerActivityConfigRef.current;
-                    startGuidanceForTimer(activityType, config);
+                // If Live Mode is disconnected (e.g., user closed it), do NOT resume guidance cues.
+                // Otherwise you'll get text-only guidance with no audio (bad UX) and may trigger reconnect side-effects.
+                if (timerActivityConfigRef.current) {
+                    if (liveStatus === LiveStatus.CONNECTED) {
+                        const { activityType, config } = timerActivityConfigRef.current;
+                        startGuidanceForTimer(activityType, config);
+                    } else {
+                        pauseGuidance();
+                    }
                 } else {
-                    resumeGuidance();
+                    if (liveStatus === LiveStatus.CONNECTED) {
+                        resumeGuidance();
+                    } else {
+                        pauseGuidance();
+                    }
                 }
             } else if (workoutProgress) {
                 setWorkoutProgress(prev => {
@@ -532,7 +561,12 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                         timerRemainingAtPause: undefined
                     };
                 });
-                resumeGuidance();
+                // Same rule: don't resume guidance unless Live Mode is connected (audio available)
+                if (liveStatus === LiveStatus.CONNECTED) {
+                    resumeGuidance();
+                } else {
+                    pauseGuidance();
+                }
             }
         }
 

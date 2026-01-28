@@ -11,6 +11,7 @@ import { createCalendarEvent } from '../services/calendarService';
 import { createActionHandlers, handleAction } from '../handlers/actionHandlers';
 import { clearAllStorage } from '../services/storageService';
 import { buildUserContext } from '../utils/contextBuilder';
+import { normalizeTimerProps } from '../utils/timerProps';
 import { TIMING, UI_LIMITS, PATTERNS, TEXT, ACTIONS } from '../constants/app';
 import { supabase } from '../supabaseConfig';
 import { v4 as uuidv4 } from 'uuid';
@@ -288,12 +289,18 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
 
         const response = await sendMessageToGemini(messages.concat(userMsg), userMsg.text, context);
 
+        // Normalize timer duration so "1 min" requests don't show 5:00 (model sometimes sends 300 or omits)
+        let uiComponent = response.uiComponent;
+        if (uiComponent?.type === 'timer' && uiComponent.props) {
+            uiComponent = { ...uiComponent, props: normalizeTimerProps(uiComponent.props, content) };
+        }
+
         const modelMsg: Message = {
             id: uuidv4(),
             role: MessageRole.MODEL,
             text: response.text,
             timestamp: Date.now(),
-            uiComponent: response.uiComponent,
+            uiComponent,
             groundingChunks: response.groundingChunks
         };
 

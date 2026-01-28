@@ -499,7 +499,7 @@ Be creative. Match the content to what the user actually needs right now.
 ***UI VALIDATION (CRITICAL - READ BEFORE CALLING renderUI)***
 Before calling renderUI, you MUST ensure ALL required data is present:
 - **workoutBuilder**: categories array MUST have at least 1 category, each with at least 2 options
-- **timer**: duration MUST be a positive number (in seconds, e.g., 60 for 1 minute)
+- **timer**: duration MUST be in SECONDS. 1 min = 60, 5 min = 300. If user says "1 min" or "one minute", use 60.
 - **workoutList**: exercises array MUST have at least 1 exercise with name
 - **chart**: data array MUST have at least 1 data point
 

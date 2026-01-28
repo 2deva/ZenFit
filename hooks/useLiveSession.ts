@@ -29,6 +29,7 @@ import {
 } from '../services/liveSessionMemoryService';
 
 import { processToolInterceptors } from '../services/toolMiddleware';
+import { normalizeTimerProps } from '../utils/timerProps';
 
 import { createCalendarEvent, getUpcomingEvents } from '../services/calendarService';
 
@@ -385,6 +386,9 @@ export const useLiveSession = ({
   const onMemoryExtractedRef = useRef(onMemoryExtracted);
   const onAudioDataRef = useRef(onAudioData);
   const getContextRef = useRef(getContext);
+  const lastUserMessageRef = useRef<string>('');
+  const manualDisconnectRef = useRef<boolean>(false);
+  const wsClosingHandledRef = useRef<boolean>(false);
 
   // State sync refs to avoid reconnecting on state changes
   const isMutedRef = useRef(isMuted);
@@ -457,7 +461,8 @@ export const useLiveSession = ({
   // DISCONNECT
   // ──────────────────────────────────────────────────────────────────────────
 
-  const disconnect = useCallback(async (manual: boolean = false) => {
+  const disconnect = useCallback(async (manual: boolean = true) => {
+    manualDisconnectRef.current = manual;
     // Stop keepalive on disconnect
     stopGuidanceKeepalive();
 
@@ -711,9 +716,8 @@ export const useLiveSession = ({
                   clearGuidanceState(userId || undefined, activeWorkoutMessageId || undefined)
                     .catch(e => console.warn('Failed to clear guidance state:', e));
                   // }).catch(e => console.warn('Failed to import persistence service:', e));
-                  if (onActivityControlRef.current) {
-                    onActivityControlRef.current('stop');
-                  }
+                  // Don't call onActivityControl('stop') here - executor is already completing,
+                  // and that would cause a circular call loop. Cleanup is handled by stopGuidance().
                 },
                 onProgressUpdate: (progress) => {
                   // Update context for Gemini awareness
@@ -842,19 +846,22 @@ export const useLiveSession = ({
             clearGuidanceState(userId || undefined, activeWorkoutMessageId || undefined)
               .catch(e => console.warn('Failed to clear guidance state:', e));
             // }).catch(e => console.warn('Failed to import persistence service:', e));
-            if (onActivityControlRef.current) {
-              onActivityControlRef.current('stop');
-            }
+            // Don't call onActivityControl('stop') here - executor is already completing,
+            // and that would cause a circular call loop. Cleanup is handled by stopGuidance().
           },
           onProgressUpdate: (progress) => {
+            if (!lastTimerRef.current) {
+              // Timer reference was cleared (e.g., after completion or error); avoid null access
+              return;
+            }
             // Update context with timer progress
             contextRef.current = updateContext(contextRef.current, {
               activeTimer: {
-                label: lastTimerRef.current!.label,
-                totalSeconds: lastTimerRef.current!.duration,
+                label: lastTimerRef.current.label,
+                totalSeconds: lastTimerRef.current.duration,
                 remainingSeconds: progress.remainingTime,
                 isRunning: progress.status === 'active',
-                startedAt: lastTimerRef.current!.timestamp || Date.now()
+                startedAt: lastTimerRef.current.timestamp || Date.now()
               }
             });
 
@@ -966,9 +973,8 @@ export const useLiveSession = ({
             clearGuidanceState(userId || undefined, activeWorkoutMessageId || undefined)
               .catch(e => console.warn('Failed to clear guidance state:', e));
             // }).catch(e => console.warn('Failed to import persistence service:', e));
-            if (onActivityControlRef.current) {
-              onActivityControlRef.current('stop');
-            }
+            // Don't call onActivityControl('stop') here - executor is already completing,
+            // and that would cause a circular call loop. Cleanup is handled by stopGuidance().
           },
           onTimerControl: (action, exerciseIndex, duration) => {
             console.log(`Timer control: ${action} for exercise ${exerciseIndex + 1}${duration ? `, duration: ${duration}s` : ''}`);
@@ -1102,7 +1108,7 @@ export const useLiveSession = ({
           }
         } else if (confirmedAction === 'END_SESSION') {
           if (onActivityControlRef.current) onActivityControlRef.current('stop');
-          disconnect();
+          disconnect(true);
         } else if (confirmedAction === 'RESTART_ACTIVITY') {
           if (onActivityControlRef.current) onActivityControlRef.current('back');
         }
@@ -1265,6 +1271,8 @@ export const useLiveSession = ({
 
     try {
       console.log("Initializing Live Session...");
+      manualDisconnectRef.current = false;
+      wsClosingHandledRef.current = false;
 
       // create new abort controller for this connection attempt
       const abortController = new AbortController();
@@ -1486,8 +1494,16 @@ export const useLiveSession = ({
                       if (isConnectedRef.current && isSessionReadyRef.current) {
                         try {
                           sess.sendRealtimeInput({ media: pcmBlob });
-                        } catch (err) {
-                          // Silently ignore send errors on closing connection
+                        } catch (err: any) {
+                          const msg = typeof err?.message === 'string' ? err.message : '';
+                          // If WS is closing/closed, stop trying to send and reset session once.
+                          if (!wsClosingHandledRef.current && /CLOSING|CLOSED/i.test(msg)) {
+                            wsClosingHandledRef.current = true;
+                            isSessionReadyRef.current = false;
+                            if (!manualDisconnectRef.current) {
+                              setTimeout(() => disconnect(false), 0);
+                            }
+                          }
                           console.debug('Audio send skipped - connection closing');
                         }
                       }
@@ -1506,7 +1522,7 @@ export const useLiveSession = ({
               } catch (err) {
                 console.error("Audio Worklet Error:", err);
                 if (onErrorRef.current) onErrorRef.current('AUDIO_SETUP', 'Failed to initialize microphone');
-                disconnect();
+                disconnect(false);
               }
             })();
           },
@@ -1550,7 +1566,11 @@ export const useLiveSession = ({
                       if (args && args.type && args.props && validateUIComponent(args.type, args.props)) {
                         // Process tool through middleware (enhances props, generates voice options)
                         const toolResult = processToolInterceptors('renderUI', args);
-                        const enhancedProps = toolResult.props;
+                        let enhancedProps = toolResult.props;
+                        // Normalize timer duration so "1 min" requests don't show 5:00
+                        if (args.type === 'timer') {
+                          enhancedProps = normalizeTimerProps(enhancedProps, lastUserMessageRef.current);
+                        }
                         const voiceOptions = toolResult.voiceOptions;
 
                         if (toolResult.wasEnhanced) {
@@ -1605,9 +1625,9 @@ export const useLiveSession = ({
                         }
 
                         // Track timer for auto-start detection
-                        if (args.type === 'timer' && args.props) {
-                          const label = args.props.label || 'Timer';
-                          const duration = args.props.duration || 300;
+                        if (args.type === 'timer' && enhancedProps) {
+                          const label = enhancedProps.label || 'Timer';
+                          const duration = enhancedProps.duration ?? 60;
 
                           // Derive activity type from label
                           const labelLower = label.toLowerCase();
@@ -1762,6 +1782,8 @@ export const useLiveSession = ({
                           clearGuidanceState(userId || undefined, activeWorkoutMessageId || undefined)
                             .catch(e => console.warn('Failed to clear guidance state:', e));
                           // }).catch(e => console.warn('Failed to import persistence service:', e));
+                          // Call onActivityControl('stop') for UI cleanup - safe now because stopGuidance()
+                          // checks executor status and won't call stop() if already completed
                           if (onActivityControlRef.current) {
                             onActivityControlRef.current('stop');
                           }
@@ -1925,6 +1947,7 @@ export const useLiveSession = ({
                 if (msg.serverContent?.inputTranscription?.text) {
                   const transcript = msg.serverContent.inputTranscription.text;
                   const isFinal = !!msg.serverContent?.turnComplete;
+                  if (isFinal && transcript.trim()) lastUserMessageRef.current = transcript;
 
                   // Buffer transcript for session summary
                   bufferTranscript({
@@ -1969,18 +1992,29 @@ export const useLiveSession = ({
                 }
 
                 if (msg.serverContent?.outputTranscription?.text) {
-                  const aiText = msg.serverContent.outputTranscription.text;
-                  if (onTranscriptionRef.current) {
-                    onTranscriptionRef.current(aiText, false, false);
-                  }
+                  const rawAiText = msg.serverContent.outputTranscription.text;
+                  // Strip leaked [SPEAK] markers and low-level control tokens like <ctrl46>
+                  // so they never appear in chat or guidance UI.
+                  const aiText = rawAiText
+                    .replace(/\[SPEAK\]\s*:\s*/gi, '')
+                    .replace(/\[SPEAK\]\s*/gi, '')
+                    .replace(/<ctrl\d+>/gi, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim();
 
-                  // Buffer AI transcripts too
-                  bufferTranscript({
-                    text: aiText,
-                    isUser: false,
-                    timestamp: Date.now(),
-                    isFinal: true
-                  });
+                  if (aiText) {
+                    if (onTranscriptionRef.current) {
+                      onTranscriptionRef.current(aiText, false, false);
+                    }
+
+                    // Buffer AI transcripts too
+                    bufferTranscript({
+                      text: aiText,
+                      isUser: false,
+                      timestamp: Date.now(),
+                      isFinal: true
+                    });
+                  }
                 }
 
                 // 3. Audio Output (skip if muted) - handle async inside IIFE
@@ -1988,6 +2022,10 @@ export const useLiveSession = ({
                 if (base64Audio && audioContextRef.current && !isMuted) {
                   (async () => {
                     const ctx = audioContextRef.current!;
+                    // If audio becomes suspended (autoplay/tab), resume before playback.
+                    if (ctx.state === 'suspended') {
+                      try { await ctx.resume(); } catch (_) { /* ignore */ }
+                    }
                     const audioData = base64ToUint8Array(base64Audio);
                     const audioBuffer = await decodeAudioData(audioData, ctx, 24000);
 
@@ -2096,7 +2134,7 @@ export const useLiveSession = ({
                       attemptReconnect(attempt + 1, maxAttempts);
                     } else {
                       onErrorRef.current('RECONNECT_FAILED', 'Unable to reconnect. Please try again manually.');
-                      disconnect();
+                      disconnect(false);
                     }
                   }
                 } catch (e) {
@@ -2104,7 +2142,7 @@ export const useLiveSession = ({
                   if (attempt < maxAttempts) {
                     attemptReconnect(attempt + 1, maxAttempts);
                   } else {
-                    disconnect();
+                    disconnect(false);
                   }
                 }
               };
@@ -2112,7 +2150,7 @@ export const useLiveSession = ({
               attemptReconnect();
             } else {
               // Normal disconnection
-              disconnect();
+              disconnect(false);
             }
           },
 
@@ -2141,7 +2179,7 @@ export const useLiveSession = ({
   useEffect(() => {
     return () => {
       if (isConnectedRef.current) {
-        disconnect();
+        disconnect(false);
       }
     };
   }, [disconnect]);
@@ -2177,6 +2215,7 @@ export const useLiveSession = ({
   // ──────────────────────────────────────────────────────────────────────────
 
   const sendMessageToLive = useCallback((messageText: string) => {
+    lastUserMessageRef.current = messageText;
     if (sessionRef.current && isConnectedRef.current && isSessionReadyRef.current) {
       try {
         sessionRef.current.sendClientContent({
@@ -2258,9 +2297,8 @@ export const useLiveSession = ({
           clearGuidanceState(userId || undefined, activeWorkoutMessageId || undefined)
             .catch(e => console.warn('Failed to clear guidance state:', e));
           // }).catch(e => console.warn('Failed to import persistence service:', e));
-          if (onActivityControlRef.current) {
-            onActivityControlRef.current('stop');
-          }
+          // Don't call onActivityControl('stop') here - executor is already completing,
+          // and that would cause a circular call loop. Cleanup is handled by stopGuidance().
         },
         onProgressUpdate: (progress) => {
           // Update context with progress if needed
@@ -2330,7 +2368,12 @@ export const useLiveSession = ({
     startGuidanceForTimer,
     stopGuidance: () => {
       if (guidanceExecutorRef.current) {
-        guidanceExecutorRef.current.stop();
+        const executor = guidanceExecutorRef.current;
+        const progress = executor.getProgress();
+        // Only call stop() if executor is not already completed/idle to prevent circular calls
+        if (progress.status !== 'completed' && progress.status !== 'idle') {
+          executor.stop();
+        }
         guidanceExecutorRef.current = null;
         // Reset guidance state flags
         isGuidanceActiveRef.current = false;

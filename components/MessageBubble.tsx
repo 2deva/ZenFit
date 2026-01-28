@@ -71,7 +71,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
               />;
             case 'timer':
               return <Timer
-                durationSeconds={component.props.duration}
+                durationSeconds={component.props.duration ?? 60}
                 label={component.props.label}
                 goalType={component.props.goalType}
                 goalIds={component.props.goalIds}

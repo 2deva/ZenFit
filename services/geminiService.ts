@@ -101,7 +101,7 @@ export const renderUIFunction: FunctionDeclaration = {
 
           // Timer Props
           label: { type: Type.STRING, description: 'Timer label (e.g., "Box Breathing", "Plank Hold", "Meditation")' },
-          duration: { type: Type.NUMBER, description: 'Duration of the timer IN SECONDS. Convert minutes to seconds (e.g., 10 minutes = 600).' },
+          duration: { type: Type.NUMBER, description: 'Duration of the timer IN SECONDS. 1 minute = 60, 5 minutes = 300. When user says "1 min" or "one minute" use 60.' },
 
           // Chart Props
           chartTitle: { type: Type.STRING },

@@ -49,6 +49,7 @@ export const Timer: React.FC<TimerProps> = ({
   const [isGuidanceExpanded, setIsGuidanceExpanded] = useState(true);
   const startedAtRef = useRef<number | null>(null);
   const hasFiredOnCompleteRef = useRef(false);
+  const lastReportedStateRef = useRef<{ remainingSeconds: number; isRunning: boolean } | null>(null);
 
   // Sync with controlled props from Live Mode
   // When in Live Mode, the guidance executor controls the timer state
@@ -56,11 +57,12 @@ export const Timer: React.FC<TimerProps> = ({
     if (controlledIsRunning !== undefined) {
       setIsActive(controlledIsRunning);
       // If stopping due to guidance completion, mark as completed
+      // Note: We check timeLeft here but don't include it in deps to avoid loop
       if (!controlledIsRunning && isLiveMode && timeLeft <= 0) {
         setIsCompleted(true);
       }
     }
-  }, [controlledIsRunning, isLiveMode, timeLeft]);
+  }, [controlledIsRunning, isLiveMode]); // Removed timeLeft from deps - it causes loop when timer completes
 
   useEffect(() => {
     if (controlledTimeLeft !== undefined) {
@@ -88,17 +90,19 @@ export const Timer: React.FC<TimerProps> = ({
   const progress = timeLeft / durationSeconds;
   const dashoffset = circumference - progress * circumference;
 
-  // Report state changes to parent (only when actual timer state changes)
+  // Report state changes to parent only when state actually changed (avoids loop when parent re-renders after setActiveTimer)
   useEffect(() => {
-    if (onStateChangeRef.current) {
-      onStateChangeRef.current({
-        label,
-        totalSeconds: durationSeconds,
-        remainingSeconds: timeLeft,
-        isRunning: isActive
-      });
-    }
-  }, [isActive, timeLeft, label, durationSeconds]); // Removed onStateChange from deps
+    const last = lastReportedStateRef.current;
+    const same = last && last.remainingSeconds === timeLeft && last.isRunning === isActive;
+    if (same || !onStateChangeRef.current) return;
+    lastReportedStateRef.current = { remainingSeconds: timeLeft, isRunning: isActive };
+    onStateChangeRef.current({
+      label,
+      totalSeconds: durationSeconds,
+      remainingSeconds: timeLeft,
+      isRunning: isActive
+    });
+  }, [isActive, timeLeft, label, durationSeconds]);
 
   useEffect(() => {
     let interval: any = null;
@@ -149,6 +153,7 @@ export const Timer: React.FC<TimerProps> = ({
     setTimeLeft(durationSeconds);
     startedAtRef.current = null;
     hasFiredOnCompleteRef.current = false;
+    lastReportedStateRef.current = null;
   };
 
   const formatTime = (seconds: number) => {
