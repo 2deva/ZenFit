@@ -1,12 +1,13 @@
 /**
  * Tool Integration Service
- * 
- * Connects UI tools with data persistence and habit tracking for long-term adherence.
- * Provides helper functions to generate tool props from user data.
+ *
+ * Connects UI tools with data persistence, habit tracking, and LifeContext.
+ * Provides helper functions to generate UI props from user data and the
+ * same underlying helpers used by the conversational context.
  */
 
 import { getStreak, getRecentWorkouts, getUserGoals } from './supabaseService';
-import { UserMemoryContext } from './userContextService';
+import { normalizeGoalType } from './userContextService';
 
 export interface ToolDataHelpers {
   generateStreakTimelineProps: (habitType: string, userId: string) => Promise<any>;
@@ -98,7 +99,7 @@ export async function getDashboardSnapshot(
 
     const goals = goalsRaw.map(g => ({
       id: g.id,
-      type: g.goal_type,
+      type: normalizeGoalType(g.goal_type),
       label: g.goal_label,
       motivation: g.motivation,
       createdAt: g.created_at

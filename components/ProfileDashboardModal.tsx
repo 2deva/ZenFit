@@ -17,7 +17,7 @@ interface ProfileDashboardModalProps {
 
 export function ProfileDashboardModal({ isOpen, onClose }: ProfileDashboardModalProps) {
   const { user, signOut } = useAuth();
-  const { dashboardSnapshot, refreshDashboardSnapshot } = useAppContext();
+  const { dashboardSnapshot, refreshDashboardSnapshot, lifeContext } = useAppContext();
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
@@ -195,25 +195,83 @@ export function ProfileDashboardModal({ isOpen, onClose }: ProfileDashboardModal
                       </div>
                     </div>
                     <span className="text-xs font-semibold text-ink-500 bg-sand-100 border border-sand-200 px-2 py-1 rounded-full">
-                      {dashboardSnapshot.goals.length}
+                      {lifeContext?.goals?.length ?? dashboardSnapshot.goals.length}
                     </span>
                   </div>
 
-                  {dashboardSnapshot.goals.length === 0 ? (
+                  {(!lifeContext?.goals || lifeContext.goals.length === 0) && dashboardSnapshot.goals.length === 0 ? (
                     <p className="text-sm text-ink-500 relative z-10">
                       No goals yet. Add one to keep Zen’s suggestions aligned with what matters most.
                     </p>
                   ) : (
                     <div className="flex flex-wrap gap-2 relative z-10">
-                      {dashboardSnapshot.goals.slice(0, 8).map(g => (
-                        <span
-                          key={g.id}
-                          className="text-xs font-semibold text-ink-700 bg-white border border-sand-200 px-3 py-1.5 rounded-full"
-                          title={g.motivation || undefined}
-                        >
-                          {g.label}
-                        </span>
-                      ))}
+                      {(lifeContext?.goals && lifeContext.goals.length > 0
+                        ? lifeContext.goals
+                        : dashboardSnapshot.goals
+                      )
+                        .slice(0, 8)
+                        .map((g: any) => {
+                          // Support both LifeContextGoal and legacy dashboard goal shape
+                          const label = g.label ?? g.goal_label ?? g.type ?? 'Goal';
+                          const motivation = g.motivation ?? null;
+                          const currentStreak = g.currentStreak ?? g.current_streak ?? 0;
+                          const bestStreak = g.bestStreak ?? g.best_streak ?? currentStreak;
+                          const completionsThisWeek = g.completionsThisWeek ?? null;
+                          const targetPerWeek = g.targetPerWeek ?? null;
+
+                          const streakText =
+                            currentStreak > 0
+                              ? `${currentStreak}-day streak`
+                              : 'Getting started';
+
+                          const weekText =
+                            completionsThisWeek != null && targetPerWeek != null
+                              ? `${completionsThisWeek}/${targetPerWeek} this week`
+                              : completionsThisWeek != null
+                                ? `${completionsThisWeek} this week`
+                                : null;
+
+                          const progressPercent =
+                            completionsThisWeek != null &&
+                            targetPerWeek != null &&
+                            targetPerWeek > 0
+                              ? Math.min(100, Math.round((completionsThisWeek / targetPerWeek) * 100))
+                              : null;
+
+                          return (
+                            <div
+                              key={g.id ?? label}
+                              className="flex flex-col items-start gap-0.5 px-3 py-2 rounded-2xl bg-white border border-sand-200 shadow-xs min-w-[140px] max-w-[180px]"
+                              title={motivation || undefined}
+                            >
+                              <span className="text-xs font-semibold text-ink-800 truncate">
+                                {label}
+                              </span>
+                              <span className="text-[10px] text-ink-400">
+                                {streakText}
+                                {weekText ? ` • ${weekText}` : ''}
+                              </span>
+                              {bestStreak > currentStreak && (
+                                <span className="text-[9px] text-ink-300">
+                                  Best streak: {bestStreak} days
+                                </span>
+                              )}
+                              {progressPercent !== null && (
+                                <div className="mt-1 w-full">
+                                  <div className="h-1.5 w-full rounded-full bg-sand-100 overflow-hidden">
+                                    <div
+                                      className="h-full rounded-full bg-gradient-to-r from-claude-400 to-claude-600"
+                                      style={{ width: `${progressPercent}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-[9px] text-ink-300 mt-0.5 inline-block">
+                                    {progressPercent}% of weekly target
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                     </div>
                   )}
                 </div>

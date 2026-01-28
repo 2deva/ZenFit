@@ -1,7 +1,7 @@
 
 import { UserContext } from './geminiService';
 import { getOnboardingState } from './supabaseService';
-import { getFullUserContext } from './userContextService';
+import { getFullUserContext, buildLifeContext } from './userContextService';
 import { SYSTEM_INSTRUCTION, API_KEY, MODEL_FAST } from '../constants';
 import { GoogleGenAI } from "@google/genai";
 import { Message, MessageRole } from '../types';
@@ -144,9 +144,10 @@ export async function refreshContext(
 
     try {
         // Fetch fresh state from Supabase
-        const [fullContext, onboardingState] = await Promise.all([
+        const [fullContext, onboardingState, lifeContext] = await Promise.all([
             getFullUserContext(userId),
-            getOnboardingState(userId)
+            getOnboardingState(userId),
+            buildLifeContext(userId)
         ]);
 
         return {
@@ -170,6 +171,7 @@ export async function refreshContext(
                 preferredWorkoutTime: onboardingState.preferredWorkoutTime || undefined,
                 totalInteractions: onboardingState.totalInteractions
             } : undefined,
+            lifeContext: lifeContext || undefined,
             userName: localOverrides.userName // Prefer local username if passed, or could rely on Supabase user profile fetch in App
         };
     } catch (e) {

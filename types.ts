@@ -48,6 +48,115 @@ export interface FitnessStats {
   stepsGoal: number;
 }
 
+// ============================================================================
+// LifeContext Types (Holistic User Profile)
+// ============================================================================
+
+export type LifeContextGoalType =
+  | 'strength'
+  | 'cardio'
+  | 'mobility'
+  | 'mindfulness'
+  | 'sleep'
+  | 'stress'
+  | 'recovery'
+  | 'other';
+
+export type LifeContextWorkPattern =
+  | 'nine_to_five'
+  | 'shift'
+  | 'freelance'
+  | 'student'
+  | 'caregiver';
+
+export type LifeContextEnvironment =
+  | 'home_only'
+  | 'gym_access'
+  | 'outdoor_friendly'
+  | 'limited_space';
+
+export interface LifeContextTrainingWindow {
+  label: string;
+  days: string[]; // e.g. ['Mon','Tue']
+  start: string;  // "07:00"
+  end: string;    // "08:00"
+  source: 'user_reported' | 'calendar' | 'inferred';
+}
+
+export interface LifeContextGoalProgress {
+  currentStreak?: number;
+  bestStreak?: number;
+  completionsThisWeek?: number;
+}
+
+export interface LifeContextGoal extends LifeContextGoalProgress {
+  id: string;
+  type: LifeContextGoalType;
+  label: string;
+  motivation?: string | null;
+  createdAt: string;
+  targetPerWeek?: number;
+  priority?: 'high' | 'medium' | 'low';
+}
+
+export interface LifeContextMovementBaseline {
+  source: 'google_fit' | 'device' | 'none';
+  avgDailySteps?: number;
+  avgDailyActiveMinutes?: number;
+  last7Days: Array<{
+    date: string;
+    steps: number;
+    activeMinutes: number;
+  }>;
+  patternSummary: string;
+}
+
+export interface LifeContextSleepConsistency {
+  avgHours?: number;
+  bedtimeVariabilityMinutes?: number;
+  summary: string;
+}
+
+export interface LifeContextStressSignals {
+  userReportedLevel?: 'low' | 'medium' | 'high';
+  patternSummary: string;
+}
+
+export interface LifeContextHabits {
+  sleepConsistency?: LifeContextSleepConsistency;
+  stressSignals?: LifeContextStressSignals;
+}
+
+export interface LifeContextPsychology {
+  primaryWhy: string;
+  secondaryWhys: string[];
+  riskPatterns: string[];
+  toneGuardrails: string;
+}
+
+export interface LifeContextProfile {
+  occupation?: string;
+  workPattern?: LifeContextWorkPattern;
+  environment?: LifeContextEnvironment;
+}
+
+export interface LifeContextSchedule {
+  timezone?: string;
+  typicalWakeTime?: string;
+  typicalSleepTime?: string;
+  preferredTrainingWindows: LifeContextTrainingWindow[];
+  hardBusyBlocksSummary: string;
+}
+
+export interface LifeContext {
+  profile: LifeContextProfile;
+  schedule: LifeContextSchedule;
+  goals: LifeContextGoal[];
+  movementBaseline: LifeContextMovementBaseline;
+  habits: LifeContextHabits;
+  psychology: LifeContextPsychology;
+}
+
 export enum LiveStatus {
   DISCONNECTED = 'disconnected',
   CONNECTING = 'connecting',

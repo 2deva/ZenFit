@@ -6,6 +6,11 @@ interface TimerProps {
   durationSeconds?: number;
   label?: string;
   onStateChange?: (state: { label: string; totalSeconds: number; remainingSeconds: number; isRunning: boolean }) => void;
+  onComplete?: (data: { label: string; durationSeconds: number; goalType?: string; goalIds?: string[] }) => void;
+
+  // Goal metadata (for LifeContext integration)
+  goalType?: string;
+  goalIds?: string[];
 
   // Controlled state (for syncing with guidance)
   controlledIsRunning?: boolean;
@@ -26,6 +31,9 @@ export const Timer: React.FC<TimerProps> = ({
   durationSeconds = 60,
   label = 'Timer',
   onStateChange,
+  onComplete,
+  goalType,
+  goalIds,
   controlledIsRunning,
   controlledTimeLeft,
   isLiveMode = false,
@@ -40,6 +48,7 @@ export const Timer: React.FC<TimerProps> = ({
   const [isCompleted, setIsCompleted] = useState(false);
   const [isGuidanceExpanded, setIsGuidanceExpanded] = useState(true);
   const startedAtRef = useRef<number | null>(null);
+  const hasFiredOnCompleteRef = useRef(false);
 
   // Sync with controlled props from Live Mode
   // When in Live Mode, the guidance executor controls the timer state
@@ -64,9 +73,11 @@ export const Timer: React.FC<TimerProps> = ({
     }
   }, [controlledTimeLeft, isLiveMode]);
 
-  // Store callback in ref to avoid triggering useEffect on every render
+  // Store callbacks in refs to avoid triggering useEffect on every render
   const onStateChangeRef = useRef(onStateChange);
   onStateChangeRef.current = onStateChange;
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
   // Responsive size
   const size = 120;
@@ -107,6 +118,19 @@ export const Timer: React.FC<TimerProps> = ({
     return () => clearInterval(interval);
   }, [isActive, timeLeft]);
 
+  // Call onComplete when timer finishes (fire once per completion)
+  useEffect(() => {
+    if (isCompleted && onCompleteRef.current && timeLeft === 0 && !hasFiredOnCompleteRef.current) {
+      hasFiredOnCompleteRef.current = true;
+      onCompleteRef.current({
+        label,
+        durationSeconds,
+        goalType,
+        goalIds
+      });
+    }
+  }, [isCompleted, timeLeft, label, durationSeconds, goalType, goalIds]);
+
   const toggle = () => {
     if (isCompleted) {
       reset();
@@ -124,6 +148,7 @@ export const Timer: React.FC<TimerProps> = ({
     setIsCompleted(false);
     setTimeLeft(durationSeconds);
     startedAtRef.current = null;
+    hasFiredOnCompleteRef.current = false;
   };
 
   const formatTime = (seconds: number) => {

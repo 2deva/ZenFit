@@ -184,7 +184,7 @@ ui-debug.log
 .runtimeconfig.json
 
 # Supabase
-.supabase/
+supabase/*
 supabase/.env
 
 # AI/ML models and data

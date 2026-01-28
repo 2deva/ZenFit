@@ -14,8 +14,12 @@ interface WorkoutListProps {
     exercises: Exercise[];
     workoutId?: string;
     userId?: string;
-    onComplete?: (data: { workoutType: string; durationSeconds: number; exercises: Exercise[] }) => void;
+    onComplete?: (data: { workoutType: string; durationSeconds: number; exercises: Exercise[]; goalType?: string; goalIds?: string[] }) => void;
     onProgressChange?: (progress: { title: string; completedExercises: string[]; totalExercises: number }) => void;
+
+    // Goal metadata (for LifeContext integration)
+    goalType?: string;
+    goalIds?: string[];
 
     // Live Mode Integration
     controlledActiveIndex?: number;
@@ -221,6 +225,8 @@ export const WorkoutList: React.FC<WorkoutListProps> = ({
     userId,
     onComplete,
     onProgressChange,
+    goalType,
+    goalIds,
     controlledActiveIndex,
     controlledCompleted,
     controlledTimerRunning,
@@ -503,7 +509,13 @@ export const WorkoutList: React.FC<WorkoutListProps> = ({
                     const durationInfo = extractDurationInfo(ex);
                     return acc + durationInfo.duration;
                 }, 0);
-                setTimeout(() => onCompleteRef.current?.({ workoutType: title, durationSeconds: totalSeconds, exercises }), 0);
+                setTimeout(() => onCompleteRef.current?.({
+                    workoutType: title,
+                    durationSeconds: totalSeconds,
+                    exercises,
+                    goalType,
+                    goalIds
+                }), 0);
             }
             return newCompleted;
         });

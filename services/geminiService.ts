@@ -1,7 +1,7 @@
 
 import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
 import { API_KEY, MODEL_CHAT, MODEL_FAST, SYSTEM_INSTRUCTION } from "../constants";
-import { Message, MessageRole, UIComponentData, UserProfile, FitnessStats } from "../types";
+import { Message, MessageRole, UIComponentData, UserProfile, FitnessStats, LifeContext } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: API_KEY });
 
@@ -321,6 +321,8 @@ export interface UserContext {
     timestamp: number;
     minutesAgo: number;
   }[];
+  // Holistic life context (goals, schedule, movement, psychology)
+  lifeContext?: LifeContext;
 }
 
 /**
@@ -505,6 +507,47 @@ INSTRUCTION: Subtly encourage sign-in for personalization and progress tracking 
             const eventTime = new Date(e.scheduledAt).toLocaleString();
             systemContext += `\n- ${e.title} at ${eventTime}`;
           });
+        }
+      }
+
+      // LifeContext summary (schedule + goals + movement + psychology)
+      if (context.lifeContext) {
+        const lc = context.lifeContext;
+        systemContext += `\n\n[LIFE CONTEXT SUMMARY]`;
+
+        if (lc.profile.occupation || lc.profile.environment) {
+          systemContext += `\nOccupation: ${lc.profile.occupation || 'unknown'}; Environment: ${lc.profile.environment || 'unspecified'}.`;
+        }
+
+        if (lc.goals && lc.goals.length > 0) {
+          const topGoals = lc.goals.slice(0, 3);
+          systemContext += `\nGoals (top ${topGoals.length}):`;
+          topGoals.forEach((g, idx) => {
+            const streak = g.currentStreak ?? 0;
+            const best = g.bestStreak ?? streak;
+            const perWeek = g.targetPerWeek ?? '?';
+            const doneWeek = g.completionsThisWeek ?? 0;
+            systemContext += `\n  ${idx + 1}) ${g.label} – ${g.type}. Streak: ${streak} days (best ${best}). This week: ${doneWeek}/${perWeek}.`;
+          });
+        }
+
+        if (lc.movementBaseline?.patternSummary) {
+          systemContext += `\nMovement baseline: ${lc.movementBaseline.patternSummary}`;
+        }
+
+        if (lc.schedule?.preferredTrainingWindows?.length > 0) {
+          const labels = lc.schedule.preferredTrainingWindows.map(w => w.label).join(', ');
+          systemContext += `\nPreferred training windows (coarse): ${labels}.`;
+        } else {
+          systemContext += `\nPreferred training windows: not known; ask the user briefly when they prefer to move.`;
+        }
+
+        if (lc.psychology) {
+          systemContext += `\nPrimary \"why\": ${lc.psychology.primaryWhy}.`;
+          if (lc.psychology.riskPatterns.length > 0) {
+            systemContext += `\nRisk patterns: ${lc.psychology.riskPatterns.join(', ')}.`;
+          }
+          systemContext += `\nTone guardrails: ${lc.psychology.toneGuardrails}`;
         }
       }
 

@@ -37,6 +37,7 @@ interface WorkoutSession {
     exercises: any;
     mood_before: string | null;
     mood_after: string | null;
+    goal_ids?: string[] | null;
     created_at: string;
 }
 
@@ -272,6 +273,7 @@ export const logWorkoutSession = async (
         exercises?: any[];
         moodBefore?: string;
         moodAfter?: string;
+        goalIds?: string[];
     }
 ): Promise<WorkoutSession | null> => {
     try {
@@ -284,7 +286,8 @@ export const logWorkoutSession = async (
                 completed: session.completed ?? false,
                 exercises: session.exercises,
                 mood_before: session.moodBefore,
-                mood_after: session.moodAfter
+                mood_after: session.moodAfter,
+                goal_ids: session.goalIds && session.goalIds.length > 0 ? session.goalIds : null
             })
             .select()
             .single();

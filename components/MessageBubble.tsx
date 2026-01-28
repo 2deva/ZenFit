@@ -73,7 +73,10 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
               return <Timer
                 durationSeconds={component.props.duration}
                 label={component.props.label}
+                goalType={component.props.goalType}
+                goalIds={component.props.goalIds}
                 onStateChange={(state) => onAction && onAction('timerStateChange', state)}
+                onComplete={(data) => onAction && onAction('timerComplete', data)}
                 // Controlled state (synced with guidance)
                 controlledIsRunning={activeTimer?.isRunning}
                 controlledTimeLeft={activeTimer?.remainingSeconds}
@@ -95,6 +98,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                 {...component.props}
                 workoutId={message.id}
                 userId={userId}
+                goalType={component.props.goalType}
+                goalIds={component.props.goalIds}
                 onComplete={(data) => onAction && onAction('workoutComplete', data)}
                 onProgressChange={(progress) => onAction && onAction('workoutProgressChange', progress)}
                 // Live Mode Integration

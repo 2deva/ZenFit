@@ -58,6 +58,7 @@ export const ACTIONS = {
     
     // Timer actions
     TIMER_STATE_CHANGE: 'timerStateChange',
+    TIMER_COMPLETE: 'timerComplete',
 } as const;
 
 // ============================================================================

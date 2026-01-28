@@ -1,10 +1,10 @@
 import React, { createContext, useContext, useState, useRef, ReactNode, useCallback } from 'react';
 import { useAuth } from './AuthContext';
-import { Message, MessageRole, UserProfile, FitnessStats, UIComponentData } from '../types';
+import { Message, MessageRole, UserProfile, FitnessStats, UIComponentData, LifeContext } from '../types';
 import { useMessages } from '../hooks/useMessages';
 import { useActivityState } from '../hooks/useActivityState';
 import { extractOnboardingContext, recordInteraction, getOnboardingState, deleteAllMessages, OnboardingState } from '../services/supabaseService';
-import { getFullUserContext, UserMemoryContext } from '../services/userContextService';
+import { getFullUserContext, UserMemoryContext, buildLifeContext } from '../services/userContextService';
 import { sendMessageToGemini } from '../services/geminiService';
 import { extractAndStoreSummary } from '../services/embeddingService';
 import { createCalendarEvent } from '../services/calendarService';
@@ -35,6 +35,7 @@ interface AppContextType {
     // Unified Dashboard Snapshot (Profile popup + other surfaces)
     dashboardSnapshot: DashboardSnapshot | null;
     refreshDashboardSnapshot: (options?: { force?: boolean }) => Promise<DashboardSnapshot | null>;
+    lifeContext: LifeContext | null;
 
     // Messages
     messages: Message[];
@@ -108,6 +109,7 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
     const [lastMessageTime, setLastMessageTime] = useState<number>(Date.now());
     const [dashboardSnapshot, setDashboardSnapshot] = useState<DashboardSnapshot | null>(null);
     const dashboardSnapshotRef = useRef<DashboardSnapshot | null>(null);
+    const [lifeContext, setLifeContext] = useState<LifeContext | null>(null);
 
     // --- UI State ---
     const [inputValue, setInputValue] = useState('');
@@ -154,7 +156,7 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
 
     // --- Context Builders ---
     const getUserContext = useCallback((profileOverride?: UserProfile) => {
-        return buildUserContext({
+        const base = buildUserContext({
             userProfile,
             userLocation,
             fitnessStats,
@@ -172,7 +174,11 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
             },
             profileOverride
         });
-    }, [userProfile, userLocation, fitnessStats, user, memoryContext, onboardingState, messages, lastMessageTime, activeTimer, currentWorkoutProgress, lastGeneratedWorkout, recentUIInteractions]);
+        if (lifeContext) {
+            (base as any).lifeContext = lifeContext;
+        }
+        return base;
+    }, [userProfile, userLocation, fitnessStats, user, memoryContext, onboardingState, messages, lastMessageTime, activeTimer, currentWorkoutProgress, lastGeneratedWorkout, recentUIInteractions, lifeContext]);
 
     const refreshDashboardSnapshot = useCallback(async (options?: { force?: boolean }) => {
         if (!supabaseUserId) return null;
@@ -185,8 +191,12 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
             return current;
         }
 
-        const snapshot = await getDashboardSnapshot(supabaseUserId, fitnessStats);
+        const [snapshot, lc] = await Promise.all([
+            getDashboardSnapshot(supabaseUserId, fitnessStats),
+            buildLifeContext(supabaseUserId, undefined)
+        ]);
         setDashboardSnapshot(snapshot);
+        setLifeContext(lc);
         return snapshot;
     }, [supabaseUserId, fitnessStats]);
 
@@ -362,7 +372,7 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
         await handleAction(action, data, actionHandlers);
 
         // Keep the unified dashboard snapshot in sync (text + live mode share this path)
-        if (supabaseUserId && (action === ACTIONS.WORKOUT_COMPLETE || action === ACTIONS.SAVE_GOALS)) {
+        if (supabaseUserId && (action === ACTIONS.WORKOUT_COMPLETE || action === ACTIONS.TIMER_COMPLETE || action === ACTIONS.SAVE_GOALS)) {
             refreshDashboardSnapshot({ force: true }).catch(console.warn);
         }
     };
@@ -376,6 +386,7 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
         userLocation, setUserLocation,
         dashboardSnapshot,
         refreshDashboardSnapshot,
+        lifeContext,
 
         messages, setMessages,
         addMessageToChat,
