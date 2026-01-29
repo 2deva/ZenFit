@@ -15,6 +15,7 @@ export const STORAGE_KEYS = {
     LIVE_SESSION: 'zen_live_session',
     LEGACY_CHAT_HISTORY: 'zen_chat_history',
     WORKOUT_PREFIX: 'zen_workout_',
+    SYNC_QUEUE: 'zenfit_sync_queue_v1',
 } as const;
 
 // ============================================================================
@@ -26,19 +27,19 @@ export const TIMING = {
     MESSAGE_SAVE_DEBOUNCE: 500,        // Wait for streaming to settle
     STATE_SAVE_DEBOUNCE: 1000,         // Save app state every 1s
     INTERRUPTION_RESET: 800,           // Reset interruption state
-    
+
     // Intervals
     FITNESS_STATS_REFRESH: 60000,      // Refresh fitness stats every minute
-    
+
     // Time conversions
     MS_PER_SECOND: 1000,
     MS_PER_MINUTE: 60000,
     SECONDS_PER_MINUTE: 60,
-    
+
     // Activity defaults
     DEFAULT_BREATHING_DURATION: 300,   // 5 minutes default
     BREATHING_CYCLE_DURATION: 16,      // Seconds per breathing cycle
-    
+
     // Selection mode timeout
     SELECTION_MODE_TIMEOUT: 30000,     // 30 seconds
 } as const;
@@ -50,12 +51,12 @@ export const TIMING = {
 export const ACTIONS = {
     // Goal actions
     SAVE_GOALS: 'saveGoals',
-    
+
     // Workout actions
     GENERATE_WORKOUT: 'generateWorkout',
     WORKOUT_PROGRESS_CHANGE: 'workoutProgressChange',
     WORKOUT_COMPLETE: 'workoutComplete',
-    
+
     // Timer actions
     TIMER_STATE_CHANGE: 'timerStateChange',
     TIMER_COMPLETE: 'timerComplete',
@@ -80,11 +81,11 @@ export const NUMBERS = {
     // Array lengths
     STREAK_TIMELINE_DAYS: 14,
     RECENT_WORKOUTS_LIMIT: 3,
-    
+
     // Time calculations
     MS_TO_SECONDS_DIVISOR: 1000,
     MS_TO_MINUTES_DIVISOR: 60000,
-    
+
     // Defaults
     DEFAULT_STREAK_COUNT: 1,
 } as const;

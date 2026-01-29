@@ -421,6 +421,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                             <button
                                 onClick={() => handleStarterClick("I'm new here and want to build sustainable fitness habits. Help me set up my personalized wellness goals.")}
                                 className="group flex items-center gap-2 px-5 py-3 bg-white/90 backdrop-blur-sm rounded-full border border-sand-200 hover:border-claude-300 hover:shadow-soft-md transition-all duration-300"
+                                data-testid="starter-journey-button"
                             >
                                 <Target className="w-4 h-4 text-claude-500" />
                                 <span className="font-medium text-sm text-ink-700">Start my journey</span>
@@ -430,6 +431,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                             <button
                                 onClick={() => handleStarterClick("I want to do a workout with your voice guidance.", true)}
                                 className="group flex items-center gap-2 px-5 py-3 bg-white/90 backdrop-blur-sm rounded-full border border-sand-200 hover:border-claude-300 hover:shadow-soft-md transition-all duration-300"
+                                data-testid="starter-workout-button"
                             >
                                 <Dumbbell className="w-4 h-4 text-claude-500" />
                                 <span className="font-medium text-sm text-ink-700">Plan a workout</span>
@@ -439,6 +441,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                             <button
                                 onClick={() => handleStarterClick("Guide me through a breathing exercise or meditation.", true)}
                                 className="group flex items-center gap-2 px-5 py-3 bg-white/90 backdrop-blur-sm rounded-full border border-sand-200 hover:border-claude-300 hover:shadow-soft-md transition-all duration-300"
+                                data-testid="starter-mindfulness-button"
                             >
                                 <Brain className="w-4 h-4 text-claude-500" />
                                 <span className="font-medium text-sm text-ink-700">Mindfulness</span>
@@ -450,6 +453,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                             <button
                                 onClick={() => handleStarterClick("Hey Zen! Let's just chat.")}
                                 className="group flex items-center gap-2 px-5 py-3 bg-white/90 backdrop-blur-sm rounded-full border border-sand-200 hover:border-claude-300 hover:shadow-soft-md transition-all duration-300"
+                                data-testid="starter-chat-button"
                             >
                                 <MessageCircle className="w-4 h-4 text-claude-500" />
                                 <span className="font-medium text-sm text-ink-700">Just chat</span>
@@ -465,6 +469,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                                 type="text"
                                 placeholder="What's on your mind?"
                                 className="flex-1 bg-transparent border-none outline-none focus:outline-none focus:ring-0 py-2.5 sm:py-3 px-3 sm:px-5 text-ink-800 placeholder:text-ink-300 text-sm sm:text-base font-medium"
+                                data-testid="empty-state-input"
                                 onFocus={(e) => {
                                     if (onSendMessage) {
                                         e.target.blur();
@@ -492,6 +497,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                                 }}
                                 className="h-9 sm:h-11 px-0 sm:px-0 flex items-center justify-center text-ink-400 hover:text-claude-600 transition-all duration-500 ease-in-out rounded-full hover:bg-claude-50 group overflow-hidden bg-transparent border-none min-w-[36px] sm:min-w-[44px] hover:min-w-[110px] sm:hover:min-w-[130px] hover:px-4"
                                 title="Live Mode"
+                                data-testid="empty-state-live-button"
                             >
                                 <div className="flex items-center justify-center">
                                     <Mic className="w-4 h-4 sm:w-5 sm:h-5 group-hover:scale-110 transition-transform" />

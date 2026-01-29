@@ -142,6 +142,7 @@ export const AppLayout: React.FC = () => {
                             className="rounded-full hover:bg-red-50 h-9 w-9 sm:h-10 sm:w-10"
                             onClick={() => setShowDeleteConfirm(true)}
                             title="Clear All Data"
+                            data-testid="clear-data-button"
                         >
                             <Trash2 className="w-4 h-4 sm:w-5 sm:h-5 text-ink-400 hover:text-red-500 transition-colors" />
                         </Button>
@@ -205,6 +206,7 @@ export const AppLayout: React.FC = () => {
                             className="flex-1 bg-transparent border-none outline-none focus:outline-none focus:border-none focus:ring-0 resize-none py-2.5 sm:py-3 px-3 sm:px-5 text-ink-800 placeholder:text-ink-300 text-sm sm:text-[15px] leading-relaxed font-body font-medium appearance-none shadow-none no-scrollbar"
                             rows={1}
                             style={{ minHeight: '44px', maxHeight: '200px', height: 'auto', boxShadow: 'none' }}
+                            data-testid="chat-textarea"
                         />
 
                         {/* Action Buttons */}
@@ -214,6 +216,7 @@ export const AppLayout: React.FC = () => {
                                     onClick={toggleLive}
                                     className="h-9 sm:h-11 px-0 sm:px-0 flex items-center justify-center text-ink-400 hover:text-claude-600 transition-all duration-500 ease-in-out rounded-full hover:bg-claude-50 group overflow-hidden bg-transparent border-none min-w-[36px] sm:min-w-[44px] hover:min-w-[110px] sm:hover:min-w-[130px] hover:px-4"
                                     title="Live Mode"
+                                    data-testid="live-mode-toggle"
                                 >
                                     <div className="flex items-center justify-center">
                                         <Mic className="w-4 h-4 sm:w-5 sm:h-5 group-hover:scale-110 transition-transform" />
@@ -229,6 +232,7 @@ export const AppLayout: React.FC = () => {
                                     size="icon"
                                     className="h-9 w-9 sm:h-11 sm:w-11 rounded-full"
                                     disabled={!inputValue.trim()}
+                                    data-testid="send-message-button"
                                 >
                                     <Send className="w-4 h-4 sm:w-5 sm:h-5 ml-0.5" />
                                 </Button>
@@ -282,6 +286,7 @@ export const AppLayout: React.FC = () => {
                                     variant="primary"
                                     className="flex-1 rounded-xl bg-red-500 hover:bg-red-600 border-red-500"
                                     onClick={clearHistory}
+                                    data-testid="confirm-delete-button"
                                 >
                                     Delete Everything
                                 </Button>

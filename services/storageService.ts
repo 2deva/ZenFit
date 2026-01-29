@@ -3,15 +3,7 @@
  * Centralized localStorage operations with error handling and type safety
  */
 
-export const STORAGE_KEYS = {
-    MESSAGES: 'zen_messages',
-    PROFILE: 'zen_profile',
-    APP_STATE: 'zen_app_state',
-    WORKOUT_PREFIX: 'zen_workout_',
-    LEGACY_CHAT_HISTORY: 'chat_history',
-    // New Keys
-    SYNC_QUEUE: 'zen_sync_queue'
-};
+import { STORAGE_KEYS } from '../constants/app';
 import { Message } from '../types';
 import { UserProfile } from '../types';
 
