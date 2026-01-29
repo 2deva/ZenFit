@@ -17,6 +17,16 @@ export interface SessionConfig {
 export interface TimerConfig {
   duration: number;
   label: string;
+  // Optional metadata for mindful sessions; ignored for generic timers.
+  meta?: {
+    mindfulConfig?: MindfulSessionConfig;
+    phases?: Array<{
+      id: string;
+      kind: 'settle' | 'breath_cycle' | 'body_scan' | 'meditation' | 'closing';
+      durationSeconds: number;
+      order: number;
+    }>;
+  };
 }
 
 export interface WorkoutListConfig {
@@ -27,6 +37,15 @@ export interface WorkoutListConfig {
     duration?: string;
     restAfter?: number;
   }>;
+}
+
+// Exported so LiveSessionContext and GuidanceEngine can share the same
+// mindful configuration semantics without duplicating types.
+export interface MindfulSessionConfig {
+  intent: 'breathing_reset' | 'deep_meditation' | 'sleep_prep' | 'focus_block';
+  totalMinutes: number;
+  guidanceStyle: 'full' | 'light' | 'silent';
+  pattern?: 'box' | '4-7-8' | 'calming' | 'energizing';
 }
 
 /**
@@ -59,11 +78,25 @@ export function generateSessionFromBuilder(
     type.includes('mindful')
   ) {
     const label = getTimerLabel(type, durationMinutes);
+
+    const mindfulConfig: MindfulSessionConfig = {
+      intent: inferMindfulIntent(type, normalizedType),
+      totalMinutes: durationMinutes,
+      guidanceStyle: inferGuidanceStyle(selections),
+      pattern: inferBreathingPattern(type)
+    };
+
+    const phases = buildMindfulPhases(mindfulConfig);
+
     return {
       type: 'timer',
       props: {
         duration: durationMinutes * 60, // Convert to seconds
-        label
+        label,
+        meta: {
+          mindfulConfig,
+          phases
+        }
       },
       goalType: normalizedType
     };
@@ -244,4 +277,94 @@ function getTimerLabel(type: string, durationMinutes: number): string {
   }
   
   return `Mindfulness Timer (${durationMinutes} min)`;
+}
+
+function inferMindfulIntent(type: string, normalizedType: LifeContextGoalType): MindfulSessionConfig['intent'] {
+  const lower = type.toLowerCase();
+
+  if (lower.includes('sleep') || lower.includes('rest')) {
+    return 'sleep_prep';
+  }
+  if (lower.includes('focus') || lower.includes('deep work')) {
+    return 'focus_block';
+  }
+  if (lower.includes('breathing') || lower.includes('breath') || normalizedType === 'recovery' || normalizedType === 'stress') {
+    return 'breathing_reset';
+  }
+  // Default for generic mindfulness / meditation
+  return 'deep_meditation';
+}
+
+function inferGuidanceStyle(selections: Record<string, string>): MindfulSessionConfig['guidanceStyle'] {
+  const style = selections.guidance?.toLowerCase();
+  if (style === 'silent') return 'silent';
+  if (style === 'light') return 'light';
+  if (style === 'full') return 'full';
+  // Default: light guidance for most users
+  return 'light';
+}
+
+function inferBreathingPattern(type: string): MindfulSessionConfig['pattern'] | undefined {
+  const lower = type.toLowerCase();
+  if (lower.includes('box')) return 'box';
+  if (lower.includes('4-7-8') || lower.includes('4 7 8')) return '4-7-8';
+  if (lower.includes('energ')) return 'energizing';
+  if (lower.includes('calm') || lower.includes('relax')) return 'calming';
+  return undefined;
+}
+
+// Exported helper so other layers (e.g., LiveSessionContext) can derive
+// consistent phase splits for mindful sessions started outside the builder.
+export function buildMindfulPhases(config: MindfulSessionConfig): Array<{
+  id: string;
+  kind: 'settle' | 'breath_cycle' | 'body_scan' | 'meditation' | 'closing';
+  durationSeconds: number;
+  order: number;
+}> {
+  const totalSeconds = config.totalMinutes * 60;
+
+  // Simple, opinionated phase splits based on intent. These can be refined later
+  // without changing external APIs.
+  if (config.intent === 'breathing_reset') {
+    const settle = Math.min(30, totalSeconds * 0.15);
+    const closing = Math.min(20, totalSeconds * 0.15);
+    const middle = Math.max(0, totalSeconds - settle - closing);
+    return [
+      { id: 'settle', kind: 'settle', durationSeconds: Math.round(settle), order: 0 },
+      { id: 'breath', kind: 'breath_cycle', durationSeconds: Math.round(middle), order: 1 },
+      { id: 'closing', kind: 'closing', durationSeconds: Math.round(closing), order: 2 }
+    ];
+  }
+
+  if (config.intent === 'sleep_prep') {
+    const settle = Math.min(60, totalSeconds * 0.25);
+    const meditation = Math.max(0, totalSeconds - settle - 30);
+    const closing = 30;
+    return [
+      { id: 'settle', kind: 'settle', durationSeconds: Math.round(settle), order: 0 },
+      { id: 'meditation', kind: 'meditation', durationSeconds: Math.round(meditation), order: 1 },
+      { id: 'closing', kind: 'closing', durationSeconds: closing, order: 2 }
+    ];
+  }
+
+  if (config.intent === 'focus_block') {
+    const settle = Math.min(20, totalSeconds * 0.1);
+    const meditation = Math.max(0, totalSeconds - settle - 20);
+    const closing = 20;
+    return [
+      { id: 'settle', kind: 'settle', durationSeconds: Math.round(settle), order: 0 },
+      { id: 'focus', kind: 'meditation', durationSeconds: Math.round(meditation), order: 1 },
+      { id: 'closing', kind: 'closing', durationSeconds: closing, order: 2 }
+    ];
+  }
+
+  // deep_meditation default
+  const settle = Math.min(45, totalSeconds * 0.2);
+  const meditation = Math.max(0, totalSeconds - settle - 30);
+  const closing = 30;
+  return [
+    { id: 'settle', kind: 'settle', durationSeconds: Math.round(settle), order: 0 },
+    { id: 'meditation', kind: 'meditation', durationSeconds: Math.round(meditation), order: 1 },
+    { id: 'closing', kind: 'closing', durationSeconds: closing, order: 2 }
+  ];
 }

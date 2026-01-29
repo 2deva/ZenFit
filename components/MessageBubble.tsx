@@ -75,8 +75,18 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                 label={component.props.label}
                 goalType={component.props.goalType}
                 goalIds={component.props.goalIds}
-                onStateChange={(state) => onAction && onAction('timerStateChange', state)}
-                onComplete={(data) => onAction && onAction('timerComplete', data)}
+                onStateChange={(state) => onAction && onAction('timerStateChange', {
+                  ...state,
+                  goalType: component.props.goalType,
+                  goalIds: component.props.goalIds,
+                  meta: component.props.meta
+                })}
+                onComplete={(data) => onAction && onAction('timerComplete', {
+                  ...data,
+                  goalType: component.props.goalType,
+                  goalIds: component.props.goalIds,
+                  meta: component.props.meta
+                })}
                 // Controlled state (synced with guidance)
                 controlledIsRunning={activeTimer?.isRunning}
                 controlledTimeLeft={activeTimer?.remainingSeconds}

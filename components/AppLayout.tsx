@@ -106,17 +106,20 @@ export const AppLayout: React.FC = () => {
     };
 
     return (
-        <div className="flex flex-col h-full min-h-0 bg-sand-50 relative overflow-hidden noise" style={{ height: '100dvh' }}>
+        <div className="fixed inset-0 flex flex-col bg-sand-50 noise">
 
-            {/* Ambient Mesh Background */}
-            <div className="absolute inset-0 mesh-bg-claude pointer-events-none"></div>
+            {/* Background container - clips overflow */}
+            <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                {/* Ambient Mesh Background */}
+                <div className="absolute inset-0 mesh-bg-claude"></div>
 
-            {/* Floating Warm Orbs - Responsive sizing */}
-            <div className="absolute -top-20 sm:-top-40 -right-20 sm:-right-40 w-[250px] sm:w-[500px] h-[250px] sm:h-[500px] rounded-full bg-gradient-radial from-claude-200/30 via-claude-100/10 to-transparent blur-3xl animate-float-slow pointer-events-none"></div>
-            <div className="absolute -bottom-32 sm:-bottom-60 -left-32 sm:-left-60 w-[200px] sm:w-[400px] h-[200px] sm:h-[400px] rounded-full bg-gradient-radial from-sand-300/40 via-sand-200/10 to-transparent blur-3xl animate-float-gentle pointer-events-none"></div>
+                {/* Floating Warm Orbs - Responsive sizing */}
+                <div className="absolute -top-20 sm:-top-40 -right-20 sm:-right-40 w-[250px] sm:w-[500px] h-[250px] sm:h-[500px] rounded-full bg-gradient-radial from-claude-200/30 via-claude-100/10 to-transparent blur-3xl animate-float-slow"></div>
+                <div className="absolute -bottom-32 sm:-bottom-60 -left-32 sm:-left-60 w-[200px] sm:w-[400px] h-[200px] sm:h-[400px] rounded-full bg-gradient-radial from-sand-300/40 via-sand-200/10 to-transparent blur-3xl animate-float-gentle"></div>
+            </div>
 
-            {/* Header - Responsive */}
-            <header className="flex-none h-16 sm:h-20 flex items-center justify-between px-4 sm:px-6 z-20 relative">
+            {/* Header - Fixed at top */}
+            <header className="flex-shrink-0 h-16 sm:h-20 flex items-center justify-between px-4 sm:px-6 z-20 relative">
                 <div className="flex items-center space-x-3 sm:space-x-4">
                     {/* Premium Logo */}
                     <div className="relative group">
@@ -147,36 +150,36 @@ export const AppLayout: React.FC = () => {
                 </div>
             </header>
 
-            {/* Chat Area */}
-            <ChatInterface
-                messages={messages}
-                isTyping={isTyping}
-                userId={supabaseUserId || undefined}
-                onAction={handleAction}
-                onSendMessage={(text) => {
-                    setInputValue(text);
-                    setTimeout(() => handleSendMessage(text), 50);
-                }}
-                onAddMessageToChat={addMessageToChat}
-                // Live Mode Integration
-                isLiveMode={liveStatus === LiveStatus.CONNECTED}
-                audioDataRef={audioDataRef}
-                aiState={
-                    liveIsSpeaking ? 'speaking' :
-                        liveStatus === LiveStatus.CONNECTED ? 'listening' : 'idle'
-                }
-                onLiveControl={handleActivityControl}
-                onStartLiveMode={startLiveModeAndSendMessage}
-                activeWorkoutMessageId={activeWorkoutMessageId}
-                activeTimer={activeTimer}
-                // Controlled workout progress for sync
-                workoutProgress={workoutProgress}
-            />
+            {/* Chat Area - Scrollable middle section */}
+            <div className="flex-1 min-h-0 overflow-hidden relative z-10">
+                <ChatInterface
+                    messages={messages}
+                    isTyping={isTyping}
+                    userId={supabaseUserId || undefined}
+                    onAction={handleAction}
+                    onSendMessage={(text) => {
+                        setInputValue(text);
+                        setTimeout(() => handleSendMessage(text), 50);
+                    }}
+                    onAddMessageToChat={addMessageToChat}
+                    // Live Mode Integration
+                    isLiveMode={liveStatus === LiveStatus.CONNECTED}
+                    audioDataRef={audioDataRef}
+                    aiState={
+                        liveIsSpeaking ? 'speaking' :
+                            liveStatus === LiveStatus.CONNECTED ? 'listening' : 'idle'
+                    }
+                    onLiveControl={handleActivityControl}
+                    onStartLiveMode={startLiveModeAndSendMessage}
+                    activeWorkoutMessageId={activeWorkoutMessageId}
+                    activeTimer={activeTimer}
+                    // Controlled workout progress for sync
+                    workoutProgress={workoutProgress}
+                />
+            </div>
 
-
-
-            {/* Floating Input Capsule - Responsive */}
-            <div ref={inputContainerRef} className="flex-none px-3 sm:px-4 pb-4 sm:pb-8 z-30 relative" style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
+            {/* Floating Input Capsule - Fixed at bottom, hidden on empty state */}
+            <div ref={inputContainerRef} className={`flex-shrink-0 px-3 sm:px-4 py-3 sm:py-4 z-30 relative transition-opacity duration-300 ${messages.length === 0 ? 'opacity-0 pointer-events-none' : 'opacity-100'}`} style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
                 {liveStatus === LiveStatus.DISCONNECTED ? (
                     <div
                         className={`
@@ -245,11 +248,6 @@ export const AppLayout: React.FC = () => {
                         />
                     </div>
                 )}
-
-                {/* Keyboard Hint - Hide on mobile */}
-                <div className="hidden sm:flex justify-center mt-3">
-                    <span className="text-[10px] text-ink-300 font-medium">Press <kbd className="px-1.5 py-0.5 bg-sand-100 border border-sand-200 rounded text-ink-400 font-mono text-[9px]">Enter</kbd> to send</span>
-                </div>
             </div>
 
             {/* Delete Confirmation Modal */}

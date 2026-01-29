@@ -82,6 +82,14 @@ export class GuidanceExecutor {
     private adaptivePaceEnabled: boolean = true;
     private averageRepDuration: number = 2500; // Default 2.5 seconds, will adapt
 
+    // When true, cues are fired based on external ActivityEngine ticks instead of
+    // this executor's internal setTimeout scheduling. This is primarily used for
+    // breathing, meditation, and simple timer activities so they share a single
+    // clock with the Timer/Workout UI.
+    private tickDriven: boolean = false;
+    // High-level density control for mindful sessions (mirrors VoiceGuidanceConfig)
+    private guidanceStyle: 'full' | 'light' | 'silent' = 'full';
+
     /**
      * Initialize guidance with a configuration
      */
@@ -94,6 +102,15 @@ export class GuidanceExecutor {
         this.activityType = config.activity;
         this.exercises = config.exercises || [];
         this.paceMultiplier = this.getPaceMultiplier(config.pace || 'normal');
+        this.guidanceStyle = (config.guidanceStyle || 'full');
+
+        // Non-workout activities (breathing, meditation, simple timers) are
+        // driven by the shared ActivityEngine clock via updateProgressFromTimer.
+        // Workout/stretching sessions keep using internal scheduling for now,
+        // since they have more complex exercise/rep transitions.
+        this.tickDriven = config.activity === 'breathing'
+            || config.activity === 'meditation'
+            || config.activity === 'timer';
         
         // Generate cues
         this.cues = generateGuidanceCues(config);
@@ -129,19 +146,34 @@ export class GuidanceExecutor {
         this.totalPausedDuration = 0;
 
         console.log('GuidanceExecutor: Starting guidance');
-        
+
         // IMPORTANT: Trigger onExerciseStart for the first exercise immediately
         // This ensures the UI knows we're starting at exercise 0
         if (this.exercises.length > 0) {
             this.callbacks?.onExerciseStart(this.exercises[0].name, 0);
         }
-        
-        // Schedule all cues
+
+        // Tick‑driven activities rely on external ActivityEngine ticks for cue
+        // firing. We only emit any cues scheduled at timing === 0ms here and
+        // let updateProgressFromTimer handle the rest.
+        if (this.tickDriven) {
+            // Fire all initial cues at t=0 (e.g., welcome/opening instructions)
+            while (this.currentCueIndex < this.cues.length && this.cues[this.currentCueIndex].timing === 0) {
+                this.executeCue(this.cues[this.currentCueIndex]);
+                this.currentCueIndex++;
+            }
+            // Progress updates are still useful for UI/analytics even when cues
+            // are driven externally.
+            this.startProgressUpdates();
+            return;
+        }
+
+        // Schedule all cues (workouts / stretching) using internal timers
         this.scheduleCues();
-        
+
         // Start progress updates
         this.startProgressUpdates();
-        
+
         // Execute first cue immediately if it's at timing 0
         if (this.cues.length > 0 && this.cues[0].timing === 0) {
             this.executeCue(this.cues[0]);
@@ -211,7 +243,9 @@ export class GuidanceExecutor {
         }
         
         // Reschedule remaining cues
-        this.scheduleRemainingCues();
+        if (!this.tickDriven) {
+            this.scheduleRemainingCues();
+        }
         
         // Restart progress updates
         this.startProgressUpdates();
@@ -402,8 +436,11 @@ export class GuidanceExecutor {
         
         console.log(`GuidanceExecutor: Pace adjusted from ${oldMultiplier} to ${this.paceMultiplier}`);
         
-        // Reschedule remaining cues with new pace
-        if (this.status === 'active') {
+        // Reschedule remaining cues with new pace (only for internally
+        // scheduled activities). Tick‑driven activities will naturally
+        // adjust based on the updated pace multiplier when updateProgressFromTimer
+        // compares cue timing against elapsed.
+        if (this.status === 'active' && !this.tickDriven) {
             this.clearScheduledCues();
             this.scheduleRemainingCues();
         }
@@ -665,6 +702,61 @@ export class GuidanceExecutor {
         };
     }
     
+    /**
+     * Drive cue execution from an external ActivityTimer snapshot.
+     *
+     * This is the core of the \"tick‑driven\" GuidanceEngine behavior: callers
+     * (ActivityEngine / Live layer) pass elapsed/remaining time from the
+     * shared clock, and we emit any cues whose scheduled time has passed.
+     */
+    updateProgressFromTimer(
+        activityId: string,
+        timer: {
+            elapsedSeconds: number;
+            remainingSeconds: number;
+            phase?: { kind: string; elapsedInPhase: number; remainingInPhase: number };
+        }
+    ): void {
+        if (!this.tickDriven) return;
+        if (this.status !== 'active') return;
+
+        // Sanity check – only respond to the owning activity
+        if (activityId !== this.activityType && this.activityType !== 'timer') {
+            // For timer/breathing/meditation we usually have a single activity,
+            // so mismatched IDs can be ignored safely.
+        }
+
+        const elapsedMs = timer.elapsedSeconds * 1000;
+
+        // Fire all cues whose (timing * paceMultiplier) has passed based on the
+        // shared clock. currentCueIndex always points to the next cue to
+        // consider, so this loop is O(number of newly due cues).
+        while (
+            this.currentCueIndex < this.cues.length &&
+            this.cues[this.currentCueIndex].timing * this.paceMultiplier <= elapsedMs
+        ) {
+            const cue = this.cues[this.currentCueIndex];
+
+            // For "light" guidance during deeper phases (meditation / breath_cycle),
+            // we skip some softer motivational cues to keep more spaciousness.
+            if (
+                this.guidanceStyle === 'light' &&
+                timer.phase &&
+                (timer.phase.kind === 'meditation' || timer.phase.kind === 'breath_cycle') &&
+                cue.type === 'motivation'
+            ) {
+                this.currentCueIndex++;
+                continue;
+            }
+
+            this.executeCue(cue);
+            this.currentCueIndex++;
+        }
+
+        // Keep external UI/analytics informed
+        this.updateProgress();
+    }
+
     /**
      * Get detailed state for persistence (includes cue-level and rep timing data)
      */
@@ -1035,7 +1127,9 @@ export function createGuidanceConfig(
 ): VoiceGuidanceConfig {
     const config: VoiceGuidanceConfig = {
         activity: activityType as any,
-        pace: args.pace || 'normal'
+        pace: args.pace || 'normal',
+        guidanceStyle: args.guidanceStyle,
+        intent: args.intent
     };
 
     if (activityType === 'workout' || activityType === 'stretching') {
@@ -1048,12 +1142,12 @@ export function createGuidanceConfig(
     }
 
     if (activityType === 'breathing') {
-        const patternName = args.breathingPattern || 'box';
+        const patternName = args.breathingPattern || args.pattern?.name || 'box';
         config.pattern = BREATHING_PATTERNS[patternName] || BREATHING_PATTERNS.box;
     }
 
     if (activityType === 'meditation') {
-        const minutes = args.durationMinutes || 5;
+        const minutes = args.durationMinutes || (args.duration ? Math.floor(args.duration / 60) : 5);
         config.intervals = [{ work: minutes * 60, rest: 0 }];
     }
 

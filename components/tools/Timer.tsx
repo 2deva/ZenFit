@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '../ui/Button';
 import { Play, Pause, RotateCcw, CheckCircle2, Timer as TimerIcon, Volume2, Mic, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
+import { useAppContext } from '../../contexts/AppContext';
 
 interface TimerProps {
   durationSeconds?: number;
@@ -21,7 +22,7 @@ interface TimerProps {
   audioDataRef?: React.MutableRefObject<Float32Array>;
   aiState?: 'listening' | 'speaking' | 'processing' | 'idle';
   currentGuidanceText?: string;
-  onLiveControl?: (action: 'pause' | 'resume' | 'skip' | 'back') => void;
+  onLiveControl?: (action: 'pause' | 'resume' | 'skip' | 'back' | 'stop') => void;
 
   // Guidance Messages
   guidanceMessages?: Array<{ id: string; text: string; timestamp: number }>;
@@ -43,37 +44,15 @@ export const Timer: React.FC<TimerProps> = ({
   onLiveControl,
   guidanceMessages = []
 }) => {
-  const [timeLeft, setTimeLeft] = useState(controlledTimeLeft ?? durationSeconds);
-  const [isActive, setIsActive] = useState(controlledIsRunning ?? false);
+  const { activitySessions } = useAppContext();
+
+  // Fully controlled timer: visual state is derived from controlled props.
+  // Local completion flag is only for UI and onComplete bookkeeping.
+  const effectiveTimeLeft = controlledTimeLeft ?? durationSeconds;
+  const isActive = controlledIsRunning ?? false;
   const [isCompleted, setIsCompleted] = useState(false);
   const [isGuidanceExpanded, setIsGuidanceExpanded] = useState(true);
-  const startedAtRef = useRef<number | null>(null);
   const hasFiredOnCompleteRef = useRef(false);
-  const lastReportedStateRef = useRef<{ remainingSeconds: number; isRunning: boolean } | null>(null);
-
-  // Sync with controlled props from Live Mode
-  // When in Live Mode, the guidance executor controls the timer state
-  useEffect(() => {
-    if (controlledIsRunning !== undefined) {
-      setIsActive(controlledIsRunning);
-      // If stopping due to guidance completion, mark as completed
-      // Note: We check timeLeft here but don't include it in deps to avoid loop
-      if (!controlledIsRunning && isLiveMode && timeLeft <= 0) {
-        setIsCompleted(true);
-      }
-    }
-  }, [controlledIsRunning, isLiveMode]); // Removed timeLeft from deps - it causes loop when timer completes
-
-  useEffect(() => {
-    if (controlledTimeLeft !== undefined) {
-      setTimeLeft(controlledTimeLeft);
-      // When time reaches 0 and controlled, mark as completed
-      if (controlledTimeLeft <= 0 && isLiveMode) {
-        setIsCompleted(true);
-        setIsActive(false);
-      }
-    }
-  }, [controlledTimeLeft, isLiveMode]);
 
   // Store callbacks in refs to avoid triggering useEffect on every render
   const onStateChangeRef = useRef(onStateChange);
@@ -87,44 +66,101 @@ export const Timer: React.FC<TimerProps> = ({
   const strokeWidth = 8;
   const radius = (size - strokeWidth) / 2;
   const circumference = radius * 2 * Math.PI;
-  const progress = timeLeft / durationSeconds;
+  const clampedTimeLeft = Math.max(0, Math.min(durationSeconds, effectiveTimeLeft));
+  const progress = clampedTimeLeft / durationSeconds;
   const dashoffset = circumference - progress * circumference;
+  const timeLeftDisplay = clampedTimeLeft;
 
-  // Report state changes to parent only when state actually changed (avoids loop when parent re-renders after setActiveTimer)
-  useEffect(() => {
-    const last = lastReportedStateRef.current;
-    const same = last && last.remainingSeconds === timeLeft && last.isRunning === isActive;
-    if (same || !onStateChangeRef.current) return;
-    lastReportedStateRef.current = { remainingSeconds: timeLeft, isRunning: isActive };
-    onStateChangeRef.current({
-      label,
-      totalSeconds: durationSeconds,
-      remainingSeconds: timeLeft,
-      isRunning: isActive
-    });
-  }, [isActive, timeLeft, label, durationSeconds]);
+  const owningSession = Object.values(activitySessions || {}).find(
+    session => session.label === label
+  );
+  const isMindfulSession =
+    !!owningSession &&
+    (owningSession.type === 'breathing' || owningSession.type === 'meditation' ||
+      owningSession.intent === 'breathing_reset' ||
+      owningSession.intent === 'deep_meditation' ||
+      owningSession.intent === 'sleep_prep');
 
-  useEffect(() => {
-    let interval: any = null;
-    if (isActive && timeLeft > 0) {
-      if (!startedAtRef.current) startedAtRef.current = Date.now();
-      interval = setInterval(() => {
-        setTimeLeft(time => {
-          if (time <= 1) {
-            setIsCompleted(true);
-            setIsActive(false);
-            return 0;
-          }
-          return time - 1;
-        });
-      }, 1000);
+  // Derive a simple mindful phase snapshot using the same semantics as
+  // ActivityEngine.getPhaseForElapsed, but scoped locally to avoid
+  // introducing a hard dependency on the hook internals.
+  type LocalPhase = {
+    id: string;
+    kind: 'settle' | 'breath_cycle' | 'body_scan' | 'meditation' | 'closing';
+    durationSeconds: number;
+    order: number;
+  };
+
+  type LocalPhaseSnapshot = {
+    id: string;
+    kind: LocalPhase['kind'];
+    index: number;
+    elapsedInPhase: number;
+    remainingInPhase: number;
+    totalPhases: number;
+  };
+
+  const getPhaseForElapsed = (phases: LocalPhase[], elapsedSeconds: number): LocalPhaseSnapshot | undefined => {
+    if (!phases.length) return undefined;
+
+    let remaining = Math.max(0, Math.floor(elapsedSeconds));
+    const sorted = [...phases].sort((a, b) => a.order - b.order);
+    let accumulated = 0;
+
+    for (let index = 0; index < sorted.length; index++) {
+      const phase = sorted[index];
+      const phaseStart = accumulated;
+      const phaseEnd = accumulated + phase.durationSeconds;
+
+      if (remaining < phaseEnd || index === sorted.length - 1) {
+        const elapsedInPhase = Math.min(phase.durationSeconds, Math.max(0, remaining - phaseStart));
+        const remainingInPhase = Math.max(0, phase.durationSeconds - elapsedInPhase);
+        return {
+          id: phase.id,
+          kind: phase.kind,
+          index,
+          elapsedInPhase,
+          remainingInPhase,
+          totalPhases: sorted.length
+        };
+      }
+
+      accumulated = phaseEnd;
     }
-    return () => clearInterval(interval);
-  }, [isActive, timeLeft]);
+
+    const last = sorted[sorted.length - 1];
+    return {
+      id: last.id,
+      kind: last.kind,
+      index: sorted.length - 1,
+      elapsedInPhase: last.durationSeconds,
+      remainingInPhase: 0,
+      totalPhases: sorted.length
+    };
+  };
+
+  const mindfulPhaseSnapshot: LocalPhaseSnapshot | undefined =
+    isMindfulSession && owningSession?.phases && durationSeconds
+      ? getPhaseForElapsed(owningSession.phases as any, durationSeconds - timeLeftDisplay)
+      : undefined;
+
+  // Keep completion flag in sync with controlled time.
+  useEffect(() => {
+    if (controlledTimeLeft !== undefined) {
+      if (controlledTimeLeft <= 0) {
+        setIsCompleted(true);
+      } else if (isCompleted) {
+        // Reset completion if upstream time moves back above zero (e.g., reset).
+        setIsCompleted(false);
+        hasFiredOnCompleteRef.current = false;
+      }
+    }
+  }, [controlledTimeLeft, isCompleted]);
 
   // Call onComplete when timer finishes (fire once per completion)
   useEffect(() => {
-    if (isCompleted && onCompleteRef.current && timeLeft === 0 && !hasFiredOnCompleteRef.current) {
+    const remaining = controlledTimeLeft ?? timeLeftDisplay;
+    if ((isCompleted || remaining <= 0) && onCompleteRef.current && !hasFiredOnCompleteRef.current) {
       hasFiredOnCompleteRef.current = true;
       onCompleteRef.current({
         label,
@@ -133,32 +169,58 @@ export const Timer: React.FC<TimerProps> = ({
         goalIds
       });
     }
-  }, [isCompleted, timeLeft, label, durationSeconds, goalType, goalIds]);
+  }, [isCompleted, controlledTimeLeft, timeLeftDisplay, label, durationSeconds, goalType, goalIds]);
 
   const toggle = () => {
     if (isCompleted) {
       reset();
     } else {
-      setIsActive(!isActive);
-      // Notify Live Mode of control action
-      if (onLiveControl) {
+      const nextIsRunning = !isActive;
+
+      // For non-Live timers, notify parent via onStateChange so ActivityEngine
+      // can start/pause the underlying ActivityTimer.
+      if (!isLiveMode && onStateChangeRef.current) {
+        onStateChangeRef.current({
+          label,
+          totalSeconds: durationSeconds,
+          remainingSeconds: timeLeftDisplay,
+          isRunning: nextIsRunning
+        });
+      }
+
+      // In Live Mode, delegate control to LiveSessionContext so it can route
+      // pause/resume to the guided activity (and underlying ActivityEngine).
+      if (isLiveMode && onLiveControl) {
         onLiveControl(isActive ? 'pause' : 'resume');
       }
     }
   };
 
   const reset = () => {
-    setIsActive(false);
     setIsCompleted(false);
-    setTimeLeft(durationSeconds);
-    startedAtRef.current = null;
     hasFiredOnCompleteRef.current = false;
-    lastReportedStateRef.current = null;
+
+    if (isLiveMode) {
+      // In Live Mode, treat reset as an explicit stop so LiveSessionContext
+      // can stop guidance and the underlying ActivityEngine session.
+      if (onLiveControl) {
+        onLiveControl('stop');
+      }
+    } else if (onStateChangeRef.current) {
+      // Non-Live timers: reset the underlying ActivityTimer via ActivityEngine.
+      onStateChangeRef.current({
+        label,
+        totalSeconds: durationSeconds,
+        remainingSeconds: durationSeconds,
+        isRunning: false
+      });
+    }
   };
 
   const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
+    const total = Math.max(0, Math.floor(seconds));
+    const mins = Math.floor(total / 60);
+    const secs = total % 60;
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   };
 
@@ -181,6 +243,34 @@ export const Timer: React.FC<TimerProps> = ({
       </div>
     );
   };
+
+  // Mindful vs generic presentations
+  const renderMindfulSubtitle = () => {
+    if (isCompleted) {
+      return "Take a moment to notice how you feel.";
+    }
+    if (!mindfulPhaseSnapshot) {
+      return isActive ? "Stay with your breath." : "When you're ready, we'll begin.";
+    }
+    switch (mindfulPhaseSnapshot.kind) {
+      case 'settle':
+        return isActive ? "Arrive, soften, and settle in." : "Find a comfortable position and we'll begin.";
+      case 'breath_cycle':
+        return isActive ? "Follow the inhale and exhale, nothing else to do." : "We'll ease into a gentle breathing rhythm.";
+      case 'body_scan':
+        return "Let your attention drift slowly through the body.";
+      case 'meditation':
+        return "Rest with your anchor. Thoughts can come and go.";
+      case 'closing':
+        return "Gently transition back; no rush.";
+      default:
+        return isActive ? "Stay with your breath." : "When you're ready, we'll begin.";
+    }
+  };
+
+  const primaryButtonLabel = isMindfulSession
+    ? (isCompleted ? "End session" : undefined)
+    : (isCompleted ? "Done" : undefined);
 
   return (
     <div className="bg-white/90 backdrop-blur-sm p-4 sm:p-6 rounded-3xl sm:rounded-4xl shadow-soft-lg flex flex-col gap-4 sm:gap-6 w-full max-w-md mx-auto animate-slide-up-fade border border-sand-200 relative overflow-hidden">
@@ -233,7 +323,7 @@ export const Timer: React.FC<TimerProps> = ({
             ) : (
               <>
                 <span className="font-display text-2xl sm:text-3xl font-bold text-ink-800 tabular-nums tracking-tight">
-                  {formatTime(timeLeft)}
+                  {formatTime(timeLeftDisplay)}
                 </span>
                 <span className="text-[8px] sm:text-[9px] text-ink-400 font-display font-bold uppercase tracking-widest mt-1">
                   Remaining
@@ -252,7 +342,11 @@ export const Timer: React.FC<TimerProps> = ({
               </h4>
             </div>
             <p className="text-xs sm:text-sm text-ink-400 font-body">
-              {isActive ? "Stay focused!" : isCompleted ? "Excellent work!" : "Ready when you are"}
+              {isMindfulSession
+                ? renderMindfulSubtitle()
+                : isCompleted
+                  ? "Excellent work!"
+                  : (isActive ? "Stay focused!" : "Ready when you are")}
             </p>
           </div>
 
@@ -271,7 +365,7 @@ export const Timer: React.FC<TimerProps> = ({
                 className="h-11 sm:h-14 px-6 sm:px-8 rounded-xl sm:rounded-2xl bg-gradient-to-r from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 text-white shadow-lg shadow-green-500/20 text-sm sm:text-base"
                 onClick={reset}
               >
-                Done
+                {primaryButtonLabel || "Done"}
               </Button>
             )}
 

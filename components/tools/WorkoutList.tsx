@@ -481,19 +481,28 @@ export const WorkoutList: React.FC<WorkoutListProps> = ({
                 const elapsed = (Date.now() - workoutProgress.timerStartTime) / 1000;
                 const remaining = Math.max(0, Math.ceil(duration - elapsed));
                 setTimeLeft(remaining);
-            } else if (isTimerRunning && timeLeft > 0) {
-                // Standard mode: Simple decrement
-                setTimeLeft(p => p - 1);
-            } else if (timeLeft === 0 && isTimerRunning && totalTime > 0 && !isLiveMode) {
-                // Auto-complete (Non-Live Mode only)
-                setIsTimerRunning(false);
-                markComplete(activeIdx);
             }
         };
 
         if (isTimerRunning) {
-            // Update more frequently in Live Mode for smoothness/accuracy
-            interval = setInterval(updateTimer, isLiveMode ? 250 : 1000);
+            if (isLiveMode) {
+                // In Live Mode, follow the shared workout timer; do not run an independent countdown.
+                interval = setInterval(updateTimer, 250);
+            } else {
+                // Non-Live mode: simple local countdown with auto-complete.
+                interval = setInterval(() => {
+                    setTimeLeft(prev => {
+                        if (prev <= 1) {
+                            setIsTimerRunning(false);
+                            if (totalTime > 0) {
+                                markComplete(activeIdx);
+                            }
+                            return 0;
+                        }
+                        return prev - 1;
+                    });
+                }, 1000);
+            }
         }
 
         return () => clearInterval(interval);
@@ -527,14 +536,18 @@ export const WorkoutList: React.FC<WorkoutListProps> = ({
         if (isLiveMode && onLiveControl) {
             onLiveControl(isTimerRunning ? 'pause' : 'resume');
         }
-        setIsTimerRunning(!isTimerRunning);
+        if (!isLiveMode) {
+            setIsTimerRunning(!isTimerRunning);
+        }
     };
 
     const handleSkip = () => {
         if (isLiveMode && onLiveControl) {
             onLiveControl('skip');
         }
-        markComplete(activeIdx);
+        if (!isLiveMode) {
+            markComplete(activeIdx);
+        }
     };
 
     const formatTime = (s: number) => {

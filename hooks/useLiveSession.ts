@@ -363,6 +363,13 @@ export const useLiveSession = ({
   const nextStartTimeRef = useRef<number>(0);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
 
+  // On some mobile browsers, playing audio while the mic is active can route audio to the earpiece.
+  // A common workaround is to route WebAudio output through a media element.
+  // This is best-effort only (platform limitations apply).
+  const outputStreamDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+  const outputAudioElRef = useRef<HTMLAudioElement | null>(null);
+  const useMediaElementOutputRef = useRef<boolean>(false);
+
   // Error handling refs
   const audioQualityRef = useRef<AudioQualityState>(createAudioQualityState());
   const clarificationRef = useRef<ClarificationState>(createClarificationState());
@@ -422,6 +429,51 @@ export const useLiveSession = ({
   // AUDIO CLEANUP
   // ──────────────────────────────────────────────────────────────────────────
 
+  const ensureMobileSpeakerOutput = useCallback(async (ctx: AudioContext) => {
+    // Only attempt on mobile-ish UAs; keep desktop behavior unchanged.
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
+    if (!isMobile) {
+      useMediaElementOutputRef.current = false;
+      return;
+    }
+
+    try {
+      // Lazily create a MediaStream destination and pipe it through a hidden <audio>.
+      if (!outputStreamDestRef.current) {
+        outputStreamDestRef.current = ctx.createMediaStreamDestination();
+      }
+
+      if (!outputAudioElRef.current) {
+        const el = document.createElement('audio');
+        el.autoplay = true;
+        // @ts-expect-error - playsInline exists on iOS Safari but isn't in all TS lib defs.
+        el.playsInline = true;
+        el.setAttribute('playsinline', 'true');
+        el.muted = false;
+        el.style.position = 'fixed';
+        el.style.left = '-9999px';
+        el.style.width = '1px';
+        el.style.height = '1px';
+        el.style.opacity = '0';
+        el.setAttribute('aria-hidden', 'true');
+        document.body.appendChild(el);
+        outputAudioElRef.current = el;
+      }
+
+      const el = outputAudioElRef.current!;
+      if (el.srcObject !== outputStreamDestRef.current!.stream) {
+        el.srcObject = outputStreamDestRef.current!.stream;
+      }
+
+      // If this fails due to autoplay restrictions, we fall back to direct output.
+      await el.play();
+      useMediaElementOutputRef.current = true;
+    } catch {
+      useMediaElementOutputRef.current = false;
+    }
+  }, []);
+
   const cleanupAudio = useCallback(() => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
@@ -455,6 +507,18 @@ export const useLiveSession = ({
       try { source.stop(); } catch (e) { }
     });
     sourcesRef.current.clear();
+
+    // Best-effort cleanup for mobile audio routing hack
+    useMediaElementOutputRef.current = false;
+    if (outputAudioElRef.current) {
+      try {
+        outputAudioElRef.current.pause();
+        outputAudioElRef.current.srcObject = null;
+        outputAudioElRef.current.remove();
+      } catch { /* ignore */ }
+      outputAudioElRef.current = null;
+    }
+    outputStreamDestRef.current = null;
   }, []);
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -1335,6 +1399,8 @@ export const useLiveSession = ({
         await audioContext.resume();
       }
       audioContextRef.current = audioContext;
+      // Best-effort: encourage speaker output on mobile when mic is active.
+      await ensureMobileSpeakerOutput(audioContext);
 
       // 4. Setup Input Stream (16kHz)
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -2031,7 +2097,12 @@ export const useLiveSession = ({
 
                     const source = ctx.createBufferSource();
                     source.buffer = audioBuffer;
-                    source.connect(ctx.destination);
+                    // Route through media element on mobile if available; otherwise direct to speakers.
+                    const outputNode =
+                      (useMediaElementOutputRef.current && outputStreamDestRef.current)
+                        ? outputStreamDestRef.current
+                        : ctx.destination;
+                    source.connect(outputNode);
 
                     const currentTime = ctx.currentTime;
                     if (nextStartTimeRef.current < currentTime) {

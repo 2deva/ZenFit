@@ -11,6 +11,7 @@ import { ACTIONS, NUMBERS } from '../constants/app';
 import { Message, MessageRole } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { generateAchievementBadgeProps, generateHabitHeatmapProps, generateChartProps } from '../services/toolIntegrationService';
+import { ActivityEvent, ActivitySession, ActivityTimer, ActivityIntent, ActivityPhase } from '../hooks/useActivityState';
 
 interface ActionHandlersOptions {
     userProfile: UserProfile;
@@ -24,6 +25,22 @@ interface ActionHandlersOptions {
     addUIInteraction: (type: string) => void;
     handleSendMessage: (text?: string, profileOverride?: UserProfile) => Promise<void>;
     setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
+    // Unified ActivityEngine API (optional in tests; required in app)
+    startActivity?: (config: {
+        type: ActivitySession['type'];
+        label: string;
+        totalSeconds: number;
+        goalType?: string;
+        goalIds?: string[];
+        activityId?: string;
+        intent?: ActivityIntent;
+        phases?: ActivityPhase[];
+        workoutMeta?: { totalSegments?: number; initialSegmentIndex?: number };
+    }) => string;
+    pauseActivity?: (activityId: string) => void;
+    resumeActivity?: (activityId: string) => void;
+    completeActivity?: (activityId: string) => void;
+    stopActivity?: (activityId: string) => void;
 }
 
 /**
@@ -41,8 +58,24 @@ export const createActionHandlers = (options: ActionHandlersOptions) => {
         setLastGeneratedWorkout,
         addUIInteraction,
         handleSendMessage,
-        setMessages
+        setMessages,
+        startActivity: startActivityRaw,
+        pauseActivity: pauseActivityRaw,
+        resumeActivity: resumeActivityRaw,
+        completeActivity: completeActivityRaw,
+        stopActivity: stopActivityRaw
     } = options;
+
+    // Provide safe no-op defaults for tests that don't wire ActivityEngine.
+    const startActivity = startActivityRaw ?? (() => '');
+    const pauseActivity = pauseActivityRaw ?? (() => { /* noop */ });
+    const resumeActivity = resumeActivityRaw ?? (() => { /* noop */ });
+    const completeActivity = completeActivityRaw ?? (() => { /* noop */ });
+    const stopActivity = stopActivityRaw ?? (() => { /* noop */ });
+
+    // Map timer labels to ActivityEngine ids so we can translate UI-level
+    // TIMER_STATE_CHANGE events into ActivityEngine commands.
+    const timerActivityIds = new Map<string, string>();
 
     return {
         [ACTIONS.SAVE_GOALS]: async (data: string[]) => {
@@ -88,7 +121,8 @@ export const createActionHandlers = (options: ActionHandlersOptions) => {
                         duration: timerProps.duration,
                         label: timerProps.label,
                         goalType: sessionConfig.goalType,
-                        goalIds: goalIds.length > 0 ? goalIds : undefined
+                        goalIds: goalIds.length > 0 ? goalIds : undefined,
+                        meta: timerProps.meta
                     }
                 };
             } else {
@@ -104,7 +138,11 @@ export const createActionHandlers = (options: ActionHandlersOptions) => {
                 };
             }
 
-            // Add the session UI component directly to messages
+            // Add the session UI component directly to messages.
+            // IMPORTANT: We do NOT also send a natural-language builder summary
+            // to Gemini here, because that caused a second, LLM-generated
+            // WorkoutList/Timer to appear. This handler is now the single
+            // source of truth for session creation.
             const sessionMsg: Message = {
                 id: uuidv4(),
                 role: MessageRole.MODEL,
@@ -114,29 +152,75 @@ export const createActionHandlers = (options: ActionHandlersOptions) => {
             };
 
             setMessages((prev: Message[]) => [...prev, sessionMsg]);
-
-            // Optionally send a brief message to Gemini for personalized coaching text
-            // (but the session tool is already rendered, so this is just for context)
-            const selections = Object.entries(data)
-                .map(([category, value]) => `${category}: ${value}`)
-                .join(', ');
-            const contextText = `I've configured my session with: ${selections}. The session is ready.`;
-            // Don't await this - let it run in background for optional coaching
-            handleSendMessage(contextText).catch(console.warn);
         },
 
         [ACTIONS.TIMER_STATE_CHANGE]: (data: any) => {
-            setActiveTimer({
-                label: data.label,
-                totalSeconds: data.totalSeconds,
-                remainingSeconds: data.remainingSeconds,
-                isRunning: data.isRunning,
-                startedAt: Date.now()
-            });
+            const label: string = data.label;
+            const totalSeconds: number = data.totalSeconds;
+            const remainingSeconds: number = data.remainingSeconds;
+            const isRunning: boolean = data.isRunning;
+            const meta = data.meta || {};
+            const mindfulConfig = meta.mindfulConfig;
+            const phases = meta.phases;
+
+            const maybeId = timerActivityIds.get(label);
+
+            // Interpret state transitions as semantic commands for ActivityEngine:
+            // - isRunning === true  → start or resume activity
+            // - isRunning === false & remaining < total → pause activity
+            // - isRunning === false & remaining === total → reset/stop activity
+
+            if (isRunning) {
+                if (maybeId) {
+                    // Resume existing timer
+                    resumeActivity(maybeId);
+                } else {
+                    // Start a new timer activity
+                    const activityId = startActivity({
+                        type: 'timer',
+                        label,
+                        totalSeconds,
+                        goalType: data.goalType,
+                        goalIds: data.goalIds,
+                        intent: mindfulConfig?.intent,
+                        phases
+                    });
+                    timerActivityIds.set(label, activityId);
+                }
+            } else {
+                if (!maybeId) {
+                    // No known activity – nothing to control
+                    return;
+                }
+
+                if (remainingSeconds < totalSeconds) {
+                    // Pause
+                    pauseActivity(maybeId);
+                } else {
+                    // Reset / stop – treat as explicit stop and clear mapping
+                    stopActivity(maybeId);
+                    timerActivityIds.delete(label);
+                }
+            }
         },
 
         [ACTIONS.TIMER_COMPLETE]: async (data: any) => {
             if (!supabaseUserId) return;
+
+            // Ensure the corresponding ActivityEngine session is marked complete
+            // if we can infer it from the label mapping above.
+            if (data.label && typeof data.label === 'string') {
+                const maybeId = timerActivityIds.get(data.label);
+                if (maybeId) {
+                    try {
+                        completeActivity(maybeId);
+                        // Once completed, we can drop the mapping
+                        timerActivityIds.delete(data.label);
+                    } catch (e) {
+                        console.warn('TIMER_COMPLETE: failed to mark ActivityEngine session complete', e);
+                    }
+                }
+            }
 
             // Use goalIds from the enriched callback if available.
             // Otherwise, fall back to inferring from goalType or label.
@@ -372,6 +456,38 @@ export const createActionHandlers = (options: ActionHandlersOptions) => {
             };
 
             setMessages((prev: Message[]) => [...prev, celebrationMsg]);
+
+            // Gently suggest a short mindful cooldown after workouts, using the
+            // same deterministic session pipeline that powers the builder.
+            if (supabaseUserId) {
+                const cooldownDuration = 2; // minutes
+                const cooldownLabel = `Breathing Practice (${cooldownDuration} min)`;
+                const cooldownTimerProps = {
+                    duration: cooldownDuration * 60,
+                    label: cooldownLabel,
+                    meta: {
+                        mindfulConfig: {
+                            intent: 'breathing_reset',
+                            totalMinutes: cooldownDuration,
+                            guidanceStyle: 'light',
+                            pattern: 'calming'
+                        }
+                    }
+                };
+
+                const cooldownMessage: Message = {
+                    id: uuidv4(),
+                    role: MessageRole.MODEL,
+                    text: `✨ How about a quick ${cooldownDuration}-minute breathing cooldown to help your body and mind recover?`,
+                    timestamp: Date.now(),
+                    uiComponent: {
+                        type: 'timer',
+                        props: cooldownTimerProps
+                    }
+                };
+
+                setMessages((prev: Message[]) => [...prev, cooldownMessage]);
+            }
 
             // Add achievement badges if any unlocked
             for (const achievement of achievements) {

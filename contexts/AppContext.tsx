@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useRef, ReactNode, useCallb
 import { useAuth } from './AuthContext';
 import { Message, MessageRole, UserProfile, FitnessStats, UIComponentData, LifeContext } from '../types';
 import { useMessages } from '../hooks/useMessages';
-import { useActivityState } from '../hooks/useActivityState';
+import { useActivityState, ActivitySession, ActivityTimer, ActivityEvent, ActivityIntent, ActivityPhase } from '../hooks/useActivityState';
 import { extractOnboardingContext, recordInteraction, getOnboardingState, deleteAllMessages, OnboardingState } from '../services/supabaseService';
 import { getFullUserContext, UserMemoryContext, buildLifeContext } from '../services/userContextService';
 import { sendMessageToGemini } from '../services/geminiService';
@@ -93,6 +93,26 @@ interface AppContextType {
     // Shared Refs for Live Mode text buffers (exposed for LiveContext)
     currentLiveModelMessageIdRef: React.MutableRefObject<string | null>;
     currentLiveUserMessageIdRef: React.MutableRefObject<string | null>;
+
+    // Unified ActivityEngine exposure
+    activitySessions: Record<string, ActivitySession>;
+    activityTimers: Record<string, ActivityTimer>;
+    startActivity: (config: {
+        type: ActivitySession['type'];
+        label: string;
+        totalSeconds: number;
+        goalType?: string;
+        goalIds?: string[];
+        activityId?: string;
+        intent?: ActivityIntent;
+        phases?: ActivityPhase[];
+        workoutMeta?: { totalSegments?: number; initialSegmentIndex?: number };
+    }) => string;
+    pauseActivity: (activityId: string) => void;
+    resumeActivity: (activityId: string) => void;
+    completeActivity: (activityId: string) => void;
+    stopActivity: (activityId: string) => void;
+    registerActivityListener: (listener: (event: ActivityEvent) => void) => () => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -123,7 +143,15 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
         activeTimer, setActiveTimer,
         currentWorkoutProgress, setCurrentWorkoutProgress,
         lastGeneratedWorkout, setLastGeneratedWorkout,
-        recentUIInteractions, addUIInteraction
+        recentUIInteractions, addUIInteraction,
+        activitySessions,
+        activityTimers,
+        startActivity,
+        pauseActivity,
+        resumeActivity,
+        completeActivity,
+        stopActivity,
+        registerActivityListener
     } = useActivityState();
 
     // --- Workout/Live Sync State ---
@@ -358,7 +386,12 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
         setLastGeneratedWorkout,
         addUIInteraction,
         handleSendMessage,
-        setMessages
+        setMessages,
+        startActivity,
+        pauseActivity,
+        resumeActivity,
+        completeActivity,
+        stopActivity
     });
 
     const handleActionWrapper = async (action: string, data: any) => {
@@ -416,7 +449,16 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
         getUserContext,
 
         currentLiveModelMessageIdRef,
-        currentLiveUserMessageIdRef
+        currentLiveUserMessageIdRef,
+
+        activitySessions,
+        activityTimers,
+        startActivity,
+        pauseActivity,
+        resumeActivity,
+        completeActivity,
+        stopActivity,
+        registerActivityListener
     };
 
     return (

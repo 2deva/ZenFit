@@ -9,6 +9,8 @@ import { refreshContext } from '../services/contextService';
 import { syncWorkoutProgressToCloud } from '../services/persistenceService';
 import { getStreak, getRecentWorkouts } from '../services/supabaseService';
 import { NUMBERS } from '../constants/app';
+import { getGuidanceExecutor } from '../services/guidanceExecutor';
+import { MindfulSessionConfig, buildMindfulPhases } from '../services/sessionGeneratorService';
 
 interface LiveSessionContextType {
     liveStatus: LiveStatus;
@@ -50,7 +52,15 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
         userProfile,
         setUserProfile,
         onboardingState,
-        setOnboardingState
+        setOnboardingState,
+        // Unified ActivityEngine API
+        activitySessions,
+        startActivity,
+        pauseActivity,
+        resumeActivity,
+        completeActivity,
+        stopActivity,
+        registerActivityListener
     } = useAppContext();
 
     const audioDataRef = useRef<Float32Array>(new Float32Array(0));
@@ -64,6 +74,9 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
     
     // Track workout completion to prevent duplicate handling
     const workoutCompletionHandledRef = useRef<Set<string>>(new Set());
+
+    // Track the currently active guided ActivityEngine session (for timers / breathing / meditation)
+    const guidedActivityIdRef = useRef<string | null>(null);
 
     // --- Callbacks for useLiveSession ---
 
@@ -217,12 +230,26 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
 
                     if (isBreathing || isMeditation) {
                         const activityType = isBreathing ? 'breathing' : 'meditation';
-                        const config = {
-                            duration: duration,
+
+                        const meta = (component.props as any).meta;
+                        const mindfulConfig: MindfulSessionConfig | undefined = meta?.mindfulConfig;
+                        const phases = meta?.phases as any[] | undefined;
+
+                        const config: any = {
+                            duration,
                             durationMinutes: Math.floor(duration / 60),
-                            label: label,
-                            ...(isBreathing && { pattern: { name: 'box', cycles: Math.floor(duration / 60) } })
+                            label,
+                            ...(isBreathing && {
+                                pattern: {
+                                    name: mindfulConfig?.pattern || 'box',
+                                    cycles: Math.floor(duration / 60)
+                                }
+                            }),
+                            guidanceStyle: mindfulConfig?.guidanceStyle,
+                            intent: mindfulConfig?.intent,
+                            phases
                         };
+
                         timerActivityConfigRef.current = { activityType, config };
                     }
                 }
@@ -451,14 +478,48 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                     (activityType === 'breathing' ? `${config.pattern?.name || 'Breathing'} Exercise` :
                         `${config.style || 'Guided'} Meditation`);
 
-                setActiveTimer({
-                    label: label,
+                // Derive a mindful configuration so Live-origin sessions share the
+                // same semantics as builder-generated mindful timers.
+                const totalMinutes = Math.max(1, Math.floor(duration / 60));
+                const guidanceStyle = (config.guidanceStyle as MindfulSessionConfig['guidanceStyle']) || 'light';
+                const inferredIntent: MindfulSessionConfig['intent'] =
+                    activityType === 'breathing'
+                        ? 'breathing_reset'
+                        : (label.toLowerCase().includes('sleep') ? 'sleep_prep' : 'deep_meditation');
+
+                const mindfulConfig: MindfulSessionConfig = {
+                    intent: inferredIntent,
+                    totalMinutes,
+                    guidanceStyle,
+                    pattern: activityType === 'breathing'
+                        ? (config.pattern?.name as any) || 'calming'
+                        : undefined
+                };
+
+                const phases = buildMindfulPhases(mindfulConfig);
+
+                // Start a unified ActivityEngine session for this guided timer so
+                // Timer UI, guidance, and Live audio all share the same clock.
+                const activityId = startActivity({
+                    type: activityType,
+                    label,
                     totalSeconds: duration,
-                    remainingSeconds: duration,
-                    isRunning: true,
-                    startedAt: Date.now()
+                    intent: mindfulConfig.intent,
+                    phases
                 });
-                timerActivityConfigRef.current = { activityType, config };
+                guidedActivityIdRef.current = activityId;
+
+                // Persist config for guidance executor, including mindful metadata.
+                const enrichedConfig = {
+                    ...config,
+                    duration,
+                    durationMinutes: totalMinutes,
+                    label,
+                    guidanceStyle: mindfulConfig.guidanceStyle,
+                    intent: mindfulConfig.intent,
+                    phases
+                };
+                timerActivityConfigRef.current = { activityType, config: enrichedConfig };
                 // Similar logic for activeWorkoutMessageId if needed
             }
         },
@@ -488,12 +549,71 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
         isGuidanceActiveRef.current = isGuidanceActive.current;
     }, [liveStatus, sendMessageToLive, isGuidanceActive]);
 
+    // Timer-driven countdown for the last few seconds, synced to the actual timer state.
+    // This avoids duplicated/skipped counts from separate guidance timing and keeps
+    // the spoken numbers aligned with the visible timer.
+    const lastSpokenSecondRef = useRef<{ label: string; second: number } | null>(null);
+    useEffect(() => {
+        const timer = activeTimer;
+        const send = sendMessageToLiveRef.current;
+
+        if (!timer || !send) {
+            lastSpokenSecondRef.current = null;
+            return;
+        }
+
+        // Only speak countdown numbers when Live Mode is connected and guidance is active.
+        if (liveStatus !== LiveStatus.CONNECTED || !isGuidanceActiveRef.current) {
+            lastSpokenSecondRef.current = null;
+            return;
+        }
+
+        // Restrict countdown to simple guided timer/breathing/meditation activities.
+        const simpleTypes: Array<'timer' | 'breathing' | 'meditation'> = ['timer', 'breathing', 'meditation'];
+        const owningSession = Object.values(activitySessions).find(
+            session => session.label === (timer.label || '') && simpleTypes.includes(session.type as any)
+        );
+        if (!owningSession) {
+            // For workouts and other complex activities, rely on GuidanceExecutor's own
+            // 3-2-1 / 10-second cues instead of this shared countdown.
+            lastSpokenSecondRef.current = null;
+            return;
+        }
+
+        const remaining = Math.round(timer.remainingSeconds ?? 0);
+        if (remaining <= 0) {
+            lastSpokenSecondRef.current = null;
+            return;
+        }
+
+        // Only count verbally for the last 5 seconds.
+        if (remaining > 5) return;
+
+        const label = timer.label || '';
+        const last = lastSpokenSecondRef.current;
+        if (last && last.label === label && last.second === remaining) {
+            return; // already spoken this second for this timer instance
+        }
+
+        lastSpokenSecondRef.current = { label, second: remaining };
+
+        try {
+            // Use the same [SPEAK] format as other guidance cues; downstream
+            // sanitization strips this prefix from text shown in chat.
+            send(`[SPEAK]: ${remaining}`);
+        } catch (e) {
+            console.warn('LiveSession: Failed to send countdown cue', e);
+        }
+    }, [activeTimer, liveStatus]);
+
 
     const handleActivityControl = useCallback((action: 'pause' | 'resume' | 'skip' | 'stop' | 'back') => {
         console.log(`Activity Control: ${action}`);
 
         if (action === 'pause') {
-            if (activeTimer) {
+            if (guidedActivityIdRef.current) {
+                pauseActivity(guidedActivityIdRef.current);
+            } else if (activeTimer) {
                 setActiveTimer((prev: any) => {
                     if (!prev) return null;
                     const elapsed = typeof prev.startedAt === 'number' ? Date.now() - prev.startedAt : 0;
@@ -521,7 +641,25 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
         }
 
         if (action === 'resume') {
-            if (activeTimer) {
+            if (guidedActivityIdRef.current) {
+                // Resume ActivityEngine timer first
+                resumeActivity(guidedActivityIdRef.current);
+                // Then coordinate guidance based on connection status
+                if (timerActivityConfigRef.current) {
+                    if (liveStatus === LiveStatus.CONNECTED) {
+                        const { activityType, config } = timerActivityConfigRef.current;
+                        startGuidanceForTimer(activityType, config);
+                    } else {
+                        pauseGuidance();
+                    }
+                } else {
+                    if (liveStatus === LiveStatus.CONNECTED) {
+                        resumeGuidance();
+                    } else {
+                        pauseGuidance();
+                    }
+                }
+            } else if (activeTimer) {
                 setActiveTimer((prev: any) => {
                     if (!prev) return null;
                     const durationMs = prev.totalSeconds * 1000;
@@ -636,6 +774,10 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
         }
 
         if (action === 'stop') {
+            if (guidedActivityIdRef.current) {
+                stopActivity(guidedActivityIdRef.current);
+                guidedActivityIdRef.current = null;
+            }
             setActiveTimer(null);
             setCurrentWorkoutProgress(null);
             setWorkoutProgress(null);
@@ -646,7 +788,32 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                 workoutCompletionHandledRef.current.delete(activeWorkoutMessageIdRef.current);
             }
         }
-    }, [activeTimer, workoutProgress, currentWorkoutProgress, setActiveTimer, setWorkoutProgress, setCurrentWorkoutProgress, pauseGuidance, resumeGuidance, startGuidanceForTimer, stopGuidance, liveStatus]);
+    }, [activeTimer, workoutProgress, currentWorkoutProgress, setActiveTimer, setWorkoutProgress, setCurrentWorkoutProgress, pauseGuidance, resumeGuidance, startGuidanceForTimer, stopGuidance, liveStatus, pauseActivity, resumeActivity, stopActivity]);
+
+    // Wire ActivityEngine ticks into the GuidanceExecutor for tick-driven activities
+    useEffect(() => {
+        const unsubscribe = registerActivityListener(event => {
+            if (event.type !== 'tick' || !event.timer) return;
+            // Only route timer/breathing/meditation activity events for now –
+            // workouts maintain their own richer scheduling until fully migrated.
+            if (event.session.type === 'timer' || event.session.type === 'breathing' || event.session.type === 'meditation') {
+                const executor = getGuidanceExecutor();
+                const elapsedSeconds = Math.max(0, event.timer.totalSeconds - event.timer.remainingSeconds);
+                executor.updateProgressFromTimer(event.activityId, {
+                    elapsedSeconds,
+                    remainingSeconds: event.timer.remainingSeconds,
+                    phase: event.phase
+                        ? {
+                            kind: event.phase.kind,
+                            elapsedInPhase: event.phase.elapsedInPhase,
+                            remainingInPhase: event.phase.remainingInPhase
+                        }
+                        : undefined
+                });
+            }
+        });
+        return unsubscribe;
+    }, [registerActivityListener]);
 
     // Update the ref for usage in the hook
     const activityControlRef = useRef(handleActivityControl);

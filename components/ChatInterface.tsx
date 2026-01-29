@@ -2,7 +2,7 @@
 import React from 'react';
 import { Message } from '../types';
 import { MessageBubble } from './MessageBubble';
-import { Sparkles, ArrowRight, MessageCircle, Dumbbell, Target, Brain, ChevronDown } from 'lucide-react';
+import { Sparkles, ArrowRight, MessageCircle, Dumbbell, Target, Brain, ChevronDown, Mic } from 'lucide-react';
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -99,16 +99,16 @@ interface StarterPillProps {
 const StarterPill: React.FC<StarterPillProps> = ({ icon, text, onClick, delay = 0 }) => (
     <button
         onClick={onClick}
-        className="group flex items-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 bg-white/90 backdrop-blur-sm rounded-full border border-sand-200 hover:border-claude-300 hover:shadow-glow-claude transition-all duration-500 opacity-0 animate-reveal-up shadow-soft"
+        className="group flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-5 py-3 sm:py-3.5 bg-white/90 backdrop-blur-sm rounded-2xl border border-sand-200 hover:border-claude-300 hover:shadow-glow-claude transition-all duration-500 opacity-0 animate-reveal-up shadow-soft w-full"
         style={{ animationDelay: `${delay}ms`, animationFillMode: 'forwards' }}
     >
-        <span className="text-claude-500 group-hover:scale-110 transition-transform duration-300">
+        <span className="text-claude-500 group-hover:scale-110 transition-transform duration-300 flex-shrink-0">
             {icon}
         </span>
-        <span className="font-medium text-sm sm:text-base text-ink-700 group-hover:text-ink-900 transition-colors">
+        <span className="font-semibold text-sm sm:text-base text-ink-700 group-hover:text-ink-900 transition-colors">
             {text}
         </span>
-        <ArrowRight className="w-4 h-4 text-ink-300 group-hover:text-claude-500 group-hover:translate-x-1 transition-all duration-300" />
+        <ArrowRight className="w-4 h-4 text-ink-300 group-hover:text-claude-500 group-hover:translate-x-1 transition-all duration-300 ml-auto flex-shrink-0" />
     </button>
 );
 
@@ -387,17 +387,16 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     const userName = user?.displayName?.split(' ')[0];
 
     return (
-        // Mobile browsers with dynamic viewport sizing.
-        // `min-h-0` allows this flex child to shrink and keeps the input visible.
-        <div className="flex-1 min-h-0 relative">
-            {/* Empty State - Premium Landing */}
+        // Container that fills available space - uses absolute positioning to fill parent
+        <div className="absolute inset-0 flex flex-col">
+            {/* Empty State - Centered Pill Design */}
             {filteredMessages.length === 0 && (
-                <div className="absolute inset-0 flex flex-col justify-center items-center px-4 sm:px-8 pb-16 sm:pb-36 z-10 pointer-events-none">
-                    <div className="pointer-events-auto w-full max-w-3xl mx-auto text-center">
-
-                        {/* Personalized Greeting */}
-                        <div className="opacity-0 animate-reveal-up" style={{ animationDelay: '0ms', animationFillMode: 'forwards' }}>
-                            <h1 className="font-display text-4xl sm:text-6xl font-bold text-ink-900 mb-3 sm:mb-4 tracking-tight">
+                <div className="absolute inset-0 flex flex-col px-4 sm:px-6 z-10">
+                    {/* Centered Content */}
+                    <div className="flex-1 flex flex-col justify-center items-center max-w-3xl mx-auto w-full">
+                        {/* Greeting */}
+                        <div className="text-center mb-10 sm:mb-12">
+                            <h1 className="font-display text-5xl sm:text-6xl font-bold text-ink-900 mb-4 tracking-tight">
                                 {userName ? (
                                     <>
                                         {greeting}, <span className="text-gradient-claude">{userName}</span>
@@ -408,50 +407,89 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                                     </>
                                 )}
                             </h1>
-                        </div>
-
-                        {/* Tagline */}
-                        <div className="opacity-0 animate-reveal-up" style={{ animationDelay: '150ms', animationFillMode: 'forwards' }}>
-                            <p className="text-ink-500 text-lg sm:text-xl mb-10 sm:mb-14 max-w-xl mx-auto font-medium leading-relaxed">
+                            <p className="text-ink-400 text-lg sm:text-xl leading-relaxed">
                                 {userName ? (
-                                    <>
-                                        Ready for your next session?<br className="hidden sm:block" /> Let's keep the momentum going.
-                                    </>
+                                    <>Your mindful fitness companion.<br />Let's keep the momentum going.</>
                                 ) : (
-                                    <>
-                                        Your mindful fitness companion.<br className="hidden sm:block" /> Let's build habits together.
-                                    </>
+                                    <>Your mindful fitness companion.<br />Let's build habits together.</>
                                 )}
                             </p>
                         </div>
 
-                        {/* Conversation Starters */}
-                        <div className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4 flex-wrap">
-                            <StarterPill
-                                icon={<Target className="w-4 h-4 sm:w-5 sm:h-5" />}
-                                text="Start my journey"
-                                onClick={() => handleStarterClick("I'm new here and want to build sustainable fitness habits. Help me understand how Zen works and set up my personalized wellness goals that balance physical health, mental wellness, and recovery.")}
-                                delay={300}
-                            />
-                            <StarterPill
-                                icon={<Dumbbell className="w-4 h-4 sm:w-5 sm:h-5" />}
-                                text="Guided workout"
-                                onClick={() => handleStarterClick("I want to do a workout with your voice guidance. Can you create a personalized routine and coach me through it in Live Mode?", true)}
-                                delay={400}
-                            />
-                            <StarterPill
-                                icon={<Brain className="w-4 h-4 sm:w-5 sm:h-5" />}
-                                text="Mindful moment"
-                                onClick={() => handleStarterClick("I need to reset my mind and body. Guide me through a breathing exercise or meditation session with your voice - something that helps with stress relief and recovery.", true)}
-                                delay={500}
-                            />
-                            <StarterPill
-                                icon={<MessageCircle className="w-4 h-4 sm:w-5 sm:h-5" />}
-                                text="Explore features"
-                                onClick={() => handleStarterClick("Hey Zen! Show me what you can do. What makes you different from other fitness apps? I want to understand your full capabilities.")}
-                                delay={600}
-                            />
+                        {/* Pill Buttons */}
+                        <div className="flex flex-wrap items-center justify-center gap-3 mb-6">
+                            <button
+                                onClick={() => handleStarterClick("I'm new here and want to build sustainable fitness habits. Help me set up my personalized wellness goals.")}
+                                className="group flex items-center gap-2 px-5 py-3 bg-white/90 backdrop-blur-sm rounded-full border border-sand-200 hover:border-claude-300 hover:shadow-soft-md transition-all duration-300"
+                            >
+                                <Target className="w-4 h-4 text-claude-500" />
+                                <span className="font-medium text-sm text-ink-700">Start my journey</span>
+                                <ArrowRight className="w-3.5 h-3.5 text-ink-300 group-hover:text-claude-500 group-hover:translate-x-0.5 transition-all" />
+                            </button>
+
+                            <button
+                                onClick={() => handleStarterClick("I want to do a workout with your voice guidance.", true)}
+                                className="group flex items-center gap-2 px-5 py-3 bg-white/90 backdrop-blur-sm rounded-full border border-sand-200 hover:border-claude-300 hover:shadow-soft-md transition-all duration-300"
+                            >
+                                <Dumbbell className="w-4 h-4 text-claude-500" />
+                                <span className="font-medium text-sm text-ink-700">Plan a workout</span>
+                                <ArrowRight className="w-3.5 h-3.5 text-ink-300 group-hover:text-claude-500 group-hover:translate-x-0.5 transition-all" />
+                            </button>
+
+                            <button
+                                onClick={() => handleStarterClick("Guide me through a breathing exercise or meditation.", true)}
+                                className="group flex items-center gap-2 px-5 py-3 bg-white/90 backdrop-blur-sm rounded-full border border-sand-200 hover:border-claude-300 hover:shadow-soft-md transition-all duration-300"
+                            >
+                                <Brain className="w-4 h-4 text-claude-500" />
+                                <span className="font-medium text-sm text-ink-700">Mindfulness</span>
+                                <ArrowRight className="w-3.5 h-3.5 text-ink-300 group-hover:text-claude-500 group-hover:translate-x-0.5 transition-all" />
+                            </button>
                         </div>
+
+                        <div className="flex flex-wrap items-center justify-center gap-3">
+                            <button
+                                onClick={() => handleStarterClick("Hey Zen! Let's just chat.")}
+                                className="group flex items-center gap-2 px-5 py-3 bg-white/90 backdrop-blur-sm rounded-full border border-sand-200 hover:border-claude-300 hover:shadow-soft-md transition-all duration-300"
+                            >
+                                <MessageCircle className="w-4 h-4 text-claude-500" />
+                                <span className="font-medium text-sm text-ink-700">Just chat</span>
+                                <ArrowRight className="w-3.5 h-3.5 text-ink-300 group-hover:text-claude-500 group-hover:translate-x-0.5 transition-all" />
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Bottom Input */}
+                    <div className="w-full max-w-2xl mx-auto pb-4 sm:pb-6">
+                        <div className="bg-white/95 backdrop-blur-xl rounded-2xl sm:rounded-[28px] p-2 flex items-center gap-2 shadow-soft-lg border border-sand-300">
+                            <input
+                                type="text"
+                                placeholder="What's on your mind?"
+                                className="flex-1 bg-transparent border-none outline-none focus:outline-none focus:ring-0 py-2.5 sm:py-3 px-3 sm:px-5 text-ink-800 placeholder:text-ink-300 text-sm sm:text-base font-medium"
+                                onFocus={(e) => {
+                                    if (onSendMessage) {
+                                        e.target.blur();
+                                        const message = e.target.value || "Hi Zen!";
+                                        onSendMessage(message);
+                                    }
+                                }}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && onSendMessage) {
+                                        const message = (e.target as HTMLInputElement).value || "Hi Zen!";
+                                        onSendMessage(message);
+                                    }
+                                }}
+                            />
+                            <button
+                                onClick={() => onStartLiveMode && onStartLiveMode("Start a live session")}
+                                className="h-9 w-9 sm:h-11 sm:w-11 flex items-center justify-center text-white bg-gradient-to-br from-claude-500 to-claude-600 hover:from-claude-600 hover:to-claude-700 rounded-full transition-all duration-300 hover:scale-105 active:scale-95 shadow-lg shadow-claude-500/15"
+                                title="Start Live Mode"
+                            >
+                                <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
+                            </button>
+                        </div>
+                        <p className="text-center text-xs text-ink-300 mt-3">
+                            Press <kbd className="px-1.5 py-0.5 bg-sand-100 border border-sand-200 rounded text-ink-400 font-mono text-[10px]">enter</kbd> to send
+                        </p>
                     </div>
                 </div>
             )}
@@ -465,7 +503,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                         setUnreadCount(0);
                         setMessagesFromBottom(0);
                     }}
-                    className="absolute bottom-20 sm:bottom-24 left-1/2 -translate-x-1/2 z-20 
+                    className="absolute bottom-4 sm:bottom-6 left-1/2 -translate-x-1/2 z-20 
                         rounded-full 
                         bg-gradient-to-br from-claude-500 to-claude-600 
                         text-white shadow-lg shadow-claude-500/30 
@@ -486,64 +524,67 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 </button>
             )}
 
-            {/* Virtual List with Smart Scrolling */}
-            <Virtuoso
-                ref={virtuosoRef}
-                data={filteredMessages}
-                className="no-scrollbar h-full"
-                followOutput={shouldAutoScroll ? "auto" : false}
-                initialTopMostItemIndex={filteredMessages.length > 0 ? filteredMessages.length - 1 : 0}
-                alignToBottom={true}
-                rangeChanged={handleRangeChanged}
-                atBottomStateChange={handleAtBottomStateChange}
-                increaseViewportBy={{ top: 200, bottom: 200 }}
-                overscan={5}
-                components={{
-                    Footer: () => (
-                        <div className="pb-28 sm:pb-36 pt-4">
-                            {isTyping && (
-                                <div className="flex w-full mb-8 justify-start animate-slide-up-fade px-3 sm:px-6 max-w-2xl mx-auto">
-                                    <div className="flex items-start gap-2 sm:gap-3">
-                                        {/* Avatar */}
-                                        <div className="flex-shrink-0 mt-1">
-                                            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg sm:rounded-xl bg-gradient-to-br from-claude-500 to-claude-600 flex items-center justify-center shadow-soft text-white animate-breathe">
-                                                <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            {/* Virtual List with Smart Scrolling - Fills all available space */}
+            <div className="flex-1 min-h-0">
+                <Virtuoso
+                    ref={virtuosoRef}
+                    data={filteredMessages}
+                    className="no-scrollbar"
+                    style={{ height: '100%' }}
+                    followOutput={shouldAutoScroll ? "auto" : false}
+                    initialTopMostItemIndex={filteredMessages.length > 0 ? filteredMessages.length - 1 : 0}
+                    alignToBottom={true}
+                    rangeChanged={handleRangeChanged}
+                    atBottomStateChange={handleAtBottomStateChange}
+                    increaseViewportBy={{ top: 200, bottom: 200 }}
+                    overscan={5}
+                    components={{
+                        Footer: () => (
+                            <div className="pb-8 pt-4">
+                                {isTyping && (
+                                    <div className="flex w-full mb-8 justify-start animate-slide-up-fade px-3 sm:px-6 max-w-2xl mx-auto">
+                                        <div className="flex items-start gap-2 sm:gap-3">
+                                            {/* Avatar */}
+                                            <div className="flex-shrink-0 mt-1">
+                                                <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg sm:rounded-xl bg-gradient-to-br from-claude-500 to-claude-600 flex items-center justify-center shadow-soft text-white animate-breathe">
+                                                    <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                                </div>
                                             </div>
-                                        </div>
 
-                                        {/* Typing Indicator */}
-                                        <div className="bg-white/90 backdrop-blur-sm px-4 sm:px-5 py-3 sm:py-4 rounded-2xl sm:rounded-3xl rounded-bl-lg border border-sand-200 shadow-soft">
-                                            <div className="flex space-x-1.5 sm:space-x-2">
-                                                <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-claude-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                                                <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-claude-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                                                <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-claude-600 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                                            {/* Typing Indicator */}
+                                            <div className="bg-white/90 backdrop-blur-sm px-4 sm:px-5 py-3 sm:py-4 rounded-2xl sm:rounded-3xl rounded-bl-lg border border-sand-200 shadow-soft">
+                                                <div className="flex space-x-1.5 sm:space-x-2">
+                                                    <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-claude-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                                                    <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-claude-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                                                    <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-claude-600 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
-                                </div>
-                            )}
+                                )}
+                            </div>
+                        )
+                    }}
+                    itemContent={(index, msg) => (
+                        <div className="px-3 sm:px-6 max-w-2xl mx-auto">
+                            <MessageBubble
+                                key={msg.id}
+                                message={msg}
+                                userId={userId}
+                                onAction={onAction}
+                                isLiveMode={isLiveMode}
+                                audioDataRef={audioDataRef}
+                                aiState={aiState}
+                                currentGuidanceText={currentGuidanceText}
+                                onLiveControl={onLiveControl}
+                                guidanceMessages={msg.uiComponent?.type === 'workoutList' || msg.uiComponent?.type === 'timer' ? guidanceMessages : undefined}
+                                activeTimer={msg.uiComponent?.type === 'timer' ? activeTimer : undefined}
+                                workoutProgress={msg.uiComponent?.type === 'workoutList' ? workoutProgress : undefined}
+                            />
                         </div>
-                    )
-                }}
-                itemContent={(index, msg) => (
-                    <div className="px-3 sm:px-6 max-w-2xl mx-auto">
-                        <MessageBubble
-                            key={msg.id}
-                            message={msg}
-                            userId={userId}
-                            onAction={onAction}
-                            isLiveMode={isLiveMode}
-                            audioDataRef={audioDataRef}
-                            aiState={aiState}
-                            currentGuidanceText={currentGuidanceText}
-                            onLiveControl={onLiveControl}
-                            guidanceMessages={msg.uiComponent?.type === 'workoutList' || msg.uiComponent?.type === 'timer' ? guidanceMessages : undefined}
-                            activeTimer={msg.uiComponent?.type === 'timer' ? activeTimer : undefined}
-                            workoutProgress={msg.uiComponent?.type === 'workoutList' ? workoutProgress : undefined}
-                        />
-                    </div>
-                )}
-            />
+                    )}
+                />
+            </div>
         </div>
     );
 };

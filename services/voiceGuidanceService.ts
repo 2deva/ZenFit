@@ -35,6 +35,19 @@ export interface VoiceGuidanceConfig {
     pattern?: BreathingPattern;
     intervals?: { work: number; rest: number }[];
     pace?: 'slow' | 'normal' | 'fast';
+    /**
+     * High-level guidance density for mindful sessions.
+     * - 'full': rich prompts throughout (default)
+     * - 'light': primarily phase boundaries + a few check-ins
+     * - 'silent': only opening/closing cues (or minimal speech)
+     */
+    guidanceStyle?: 'full' | 'light' | 'silent';
+    /**
+     * Optional semantic intent for mindful timers. This mirrors
+     * MindfulSessionConfig.intent but is kept lightweight here to
+     * avoid a hard dependency on the session generator module.
+     */
+    intent?: 'breathing_reset' | 'deep_meditation' | 'sleep_prep' | 'focus_block';
 }
 
 export interface GuidanceCue {
@@ -636,15 +649,8 @@ function generateBreathingCues(
             priority: 'immediate'
         });
 
-        // Count the inhale (softer, less intrusive)
-        for (let i = 1; i <= pattern.inhale; i++) {
-            cues.push({
-                timing: currentTime + (i * 1000 * pace),
-                type: 'count',
-                text: i.toString(),
-                priority: 'queued'
-            });
-        }
+        // (Previously: per-second numeric inhale counts. Removed to avoid
+        // timing drift and repeated/ skipped numbers with remote TTS.)
         currentTime += (pattern.inhale * 1000 * pace) + (500 * pace); // Small gap after inhale
 
         // Hold (if specified)
@@ -660,14 +666,7 @@ function generateBreathingCues(
                 priority: 'immediate'
             });
 
-            for (let i = 1; i <= pattern.hold; i++) {
-                cues.push({
-                    timing: currentTime + (i * 1000 * pace),
-                    type: 'count',
-                    text: i.toString(),
-                    priority: 'queued'
-                });
-            }
+            // (Previously: per-second numeric hold counts. Removed for robustness.)
             currentTime += (pattern.hold * 1000 * pace) + (500 * pace);
         }
 
@@ -683,14 +682,7 @@ function generateBreathingCues(
             priority: 'immediate'
         });
 
-        for (let i = 1; i <= pattern.exhale; i++) {
-            cues.push({
-                timing: currentTime + (i * 1000 * pace),
-                type: 'count',
-                text: i.toString(),
-                priority: 'queued'
-            });
-        }
+        // (Previously: per-second numeric exhale counts. Removed for robustness.)
         currentTime += (pattern.exhale * 1000 * pace) + (500 * pace);
 
         // Hold empty (if specified)
@@ -706,14 +698,7 @@ function generateBreathingCues(
                 priority: 'immediate'
             });
 
-            for (let i = 1; i <= pattern.holdEmpty; i++) {
-                cues.push({
-                    timing: currentTime + (i * 1000 * pace),
-                    type: 'count',
-                    text: i.toString(),
-                    priority: 'queued'
-                });
-            }
+            // (Previously: per-second numeric empty-hold counts. Removed for robustness.)
             currentTime += (pattern.holdEmpty * 1000 * pace) + (500 * pace);
         }
 
@@ -1017,6 +1002,65 @@ export function adjustCuesForPace(
 }
 
 // ============================================================================
+// STYLE ADJUSTMENT HELPERS
+// ============================================================================
+
+/**
+ * Apply guidanceStyle post-processing to a cue sequence.
+ *
+ * This keeps cue planning simple while allowing the same base
+ * templates to serve "full", "light", and "silent" experiences.
+ */
+function applyGuidanceStyle(
+    cues: GuidanceCue[],
+    activity: ActivityType,
+    guidanceStyle: VoiceGuidanceConfig['guidanceStyle']
+): GuidanceCue[] {
+    if (!guidanceStyle || guidanceStyle === 'full') return cues;
+
+    // For non-mindful activities we keep current behaviour.
+    if (activity === 'workout' || activity === 'stretching') {
+        return cues;
+    }
+
+    // Silent: keep only opening (t=0) + explicit completion cues.
+    if (guidanceStyle === 'silent') {
+        const hasCompletion = cues.some(c => c.type === 'completion');
+        const maxTiming = cues.reduce((m, c) => Math.max(m, c.timing), 0);
+        return cues.filter(c =>
+            c.timing === 0 ||
+            c.type === 'completion' ||
+            (!hasCompletion && c.timing === maxTiming) // fallback last cue
+        );
+    }
+
+    // Light: keep opening, closing, and a sparse set of mid-session prompts.
+    if (guidanceStyle === 'light') {
+        if (cues.length <= 6) return cues; // already sparse
+
+        const maxTiming = cues.reduce((m, c) => Math.max(m, c.timing), 0);
+        const targetSlots = 4; // start, two mid, end
+        const slotSize = maxTiming / targetSlots || 1;
+
+        return cues.filter(cue => {
+            if (cue.timing === 0 || cue.type === 'completion') return true;
+            // Always keep explicit phase-transition style cues
+            if (cue.type === 'transition') return true;
+            // Prefer immediate (higher-salience) cues over queued ones
+            if (cue.priority === 'queued' && (cue.type === 'motivation' || cue.type === 'instruction')) {
+                // Sample only some queued cues based on slot buckets
+                const bucket = Math.floor(cue.timing / slotSize);
+                // Keep first queued cue we encounter in each middle bucket
+                return bucket === 1 || bucket === 2;
+            }
+            return true;
+        });
+    }
+
+    return cues;
+}
+
+// ============================================================================
 // MAIN EXPORT
 // ============================================================================
 
@@ -1034,21 +1078,25 @@ export function generateGuidanceCues(config: VoiceGuidanceConfig): GuidanceCue[]
             }
             break;
 
-        case 'breathing':
+        case 'breathing': {
             if (config.pattern) {
                 cues = generateBreathingCues(config.pattern, paceMultiplier);
             } else {
                 // Default to box breathing
                 cues = generateBreathingCues(BREATHING_PATTERNS.box, paceMultiplier);
             }
+            cues = applyGuidanceStyle(cues, 'breathing', config.guidanceStyle);
             break;
+        }
 
-        case 'meditation':
+        case 'meditation': {
             const duration = config.intervals?.[0]?.work
                 ? Math.floor(config.intervals[0].work / 60)
                 : 5;
             cues = generateMeditationCues(duration, paceMultiplier);
+            cues = applyGuidanceStyle(cues, 'meditation', config.guidanceStyle);
             break;
+        }
 
         case 'stretching':
             // Similar to workout but with longer holds
@@ -1062,12 +1110,14 @@ export function generateGuidanceCues(config: VoiceGuidanceConfig): GuidanceCue[]
             }
             break;
 
-        case 'timer':
+        case 'timer': {
             // Simple timer with end warnings
             const timerDuration = config.intervals?.[0]?.work || 60;
             const timerLabel = (config as any).label || 'Timer';
             cues = generateTimerCues(timerDuration, timerLabel, paceMultiplier);
+            cues = applyGuidanceStyle(cues, 'timer', config.guidanceStyle);
             break;
+        }
     }
 
     return cues;
