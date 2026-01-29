@@ -409,9 +409,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                             </h1>
                             <p className="text-ink-400 text-lg sm:text-xl leading-relaxed">
                                 {userName ? (
-                                    <>Your mindful fitness companion.<br />Let's keep the momentum going.</>
+                                    <>Your personal fitness coach.<br />Let&apos;s pick up where you left off.</>
                                 ) : (
-                                    <>Your mindful fitness companion.<br />Let's build habits together.</>
+                                    <>Your mindful fitness companion.<br />Let&apos;s build habits together.</>
                                 )}
                             </p>
                         </div>
@@ -480,11 +480,25 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                                 }}
                             />
                             <button
-                                onClick={() => onStartLiveMode && onStartLiveMode("Start a live session")}
-                                className="h-9 w-9 sm:h-11 sm:w-11 flex items-center justify-center text-white bg-gradient-to-br from-claude-500 to-claude-600 hover:from-claude-600 hover:to-claude-700 rounded-full transition-all duration-300 hover:scale-105 active:scale-95 shadow-lg shadow-claude-500/15"
-                                title="Start Live Mode"
+                                onClick={() => {
+                                    const message = "Start a live session";
+                                    // Show the intent in chat without triggering text-mode Gemini
+                                    if (onAddMessageToChat) {
+                                        onAddMessageToChat(message);
+                                    }
+                                    if (onStartLiveMode) {
+                                        onStartLiveMode(message);
+                                    }
+                                }}
+                                className="h-9 sm:h-11 px-0 sm:px-0 flex items-center justify-center text-ink-400 hover:text-claude-600 transition-all duration-500 ease-in-out rounded-full hover:bg-claude-50 group overflow-hidden bg-transparent border-none min-w-[36px] sm:min-w-[44px] hover:min-w-[110px] sm:hover:min-w-[130px] hover:px-4"
+                                title="Live Mode"
                             >
-                                <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
+                                <div className="flex items-center justify-center">
+                                    <Mic className="w-4 h-4 sm:w-5 sm:h-5 group-hover:scale-110 transition-transform" />
+                                    <span className="max-w-0 group-hover:max-w-[100px] opacity-0 group-hover:opacity-100 transition-all duration-500 ease-in-out overflow-hidden whitespace-nowrap ml-0 group-hover:ml-2 text-xs sm:text-sm font-semibold tracking-tight">
+                                        Live Mode
+                                    </span>
+                                </div>
                             </button>
                         </div>
                         <p className="text-center text-xs text-ink-300 mt-3">

@@ -71,6 +71,13 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
     const modelTranscriptBufferRef = useRef<string>('');
     const pendingLiveMessageRef = useRef<string | null>(null);
     const timerActivityConfigRef = useRef<{ activityType: string; config: any } | null>(null);
+    // Robust routing: guidance transcripts can arrive slightly after the executor marks
+    // itself complete. Keep a short "linger" window so those trailing transcripts are
+    // still categorized as guidance (never leaking into general chat).
+    const guidanceRouteUntilRef = useRef<number>(0);
+    // Track the most recent tool message id (timer/workoutList) as the guidance thread id.
+    // This covers cases where guidance restarts without a new tool call (e.g., resume).
+    const lastGuidanceThreadIdRef = useRef<string | null>(null);
     
     // Track workout completion to prevent duplicate handling
     const workoutCompletionHandledRef = useRef<Set<string>>(new Set());
@@ -126,6 +133,13 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                 };
                 setMessages(prev => [...prev, newMessage]);
             }
+
+            // If guidance is not active anymore, treat a user utterance as the start
+            // of a normal chat turn and stop routing subsequent model transcripts as guidance.
+            // (If guidance *is* active, we keep routing guidance responses to the guidance UI.)
+            if (!isGuidanceActive.current && !isExpectingGuidanceResponse.current) {
+                guidanceRouteUntilRef.current = 0;
+            }
         } else {
             // STRICT TURN HANDLING: Detect Role Switch (User -> Model)
             if (currentLiveUserMessageIdRef.current) {
@@ -151,17 +165,31 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                 modelTranscriptBufferRef.current = existing + (needsSpace ? ' ' : '') + incoming;
             }
 
-            // Use isGuidanceActive.current directly from hook instead of synced ref for immediate updates
+            // Robust guidance routing:
+            // - During guidance, everything model-says belongs in guidance UI.
+            // - After guidance completes, trailing transcripts can still arrive.
+            //   We keep a short "linger" window to classify them as guidance too.
+            const now = Date.now();
             const guidanceActive = isGuidanceActive.current;
-            const workoutMsgId = activeWorkoutMessageIdRef.current;
+            const expectingGuidance = isExpectingGuidanceResponse.current;
+            if (guidanceActive || expectingGuidance) {
+                guidanceRouteUntilRef.current = Math.max(guidanceRouteUntilRef.current, now + 12_000);
+            }
+            const shouldRouteAsGuidance = guidanceActive || expectingGuidance || now < guidanceRouteUntilRef.current;
+
+            const workoutMsgId = activeWorkoutMessageIdRef.current || lastGuidanceThreadIdRef.current;
 
             if (currentLiveModelMessageIdRef.current) {
                 setMessages(prev => prev.map(msg => {
                     if (msg.id === currentLiveModelMessageIdRef.current) {
                         let updateData: Partial<Message> = { text: modelTranscriptBufferRef.current };
-                        if (guidanceActive && !msg.messageContext && workoutMsgId && !msg.uiComponent) {
+                        // Never tag tool-containing messages as guidance (would hide the tool UI).
+                        // But do tag normal model transcript messages when we are in (or just finished) guidance.
+                        if (shouldRouteAsGuidance && !msg.messageContext && !msg.uiComponent) {
                             updateData.messageContext = 'workout_guidance';
-                            updateData.relatedWorkoutId = workoutMsgId;
+                            if (workoutMsgId) {
+                                updateData.relatedWorkoutId = workoutMsgId;
+                            }
                         }
                         return { ...msg, ...updateData };
                     }
@@ -174,9 +202,11 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                 let messageContext: 'workout_guidance' | 'general' | undefined;
                 let relatedWorkoutId: string | undefined;
 
-                if (guidanceActive && workoutMsgId) {
+                if (shouldRouteAsGuidance) {
                     messageContext = 'workout_guidance';
-                    relatedWorkoutId = workoutMsgId;
+                    if (workoutMsgId) {
+                        relatedWorkoutId = workoutMsgId;
+                    }
                 }
 
                 const newMessage: Message = {
@@ -221,6 +251,7 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
             if (component.type === 'workoutList' || component.type === 'timer') {
                 activeWorkoutMessageIdRef.current = messageId;
                 setActiveWorkoutMessageId(messageId);
+                lastGuidanceThreadIdRef.current = messageId;
 
                 if (component.type === 'timer' && component.props) {
                     const label = component.props.label || '';
@@ -258,6 +289,25 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
             return updatedMessages;
         });
     }, [setMessages, activeWorkoutMessageIdRef, setActiveWorkoutMessageId, currentLiveModelMessageIdRef]);
+
+    // If the app restored messages from local storage / cloud and we don't have
+    // an active tool thread selected, default to the most recent timer/workoutList
+    // message so guidance routing has a stable anchor.
+    useEffect(() => {
+        if (activeWorkoutMessageIdRef.current) {
+            lastGuidanceThreadIdRef.current = activeWorkoutMessageIdRef.current;
+            return;
+        }
+        if (!messages || messages.length === 0) return;
+        const lastToolMsg = [...messages].reverse().find(m =>
+            m.uiComponent?.type === 'timer' || m.uiComponent?.type === 'workoutList'
+        );
+        if (lastToolMsg) {
+            activeWorkoutMessageIdRef.current = lastToolMsg.id;
+            lastGuidanceThreadIdRef.current = lastToolMsg.id;
+            setActiveWorkoutMessageId(lastToolMsg.id);
+        }
+    }, [messages, setActiveWorkoutMessageId, activeWorkoutMessageIdRef]);
 
     const handleLiveError = useCallback((type: string, message: string) => {
         console.warn(`Live Mode Error [${type}]:`, message);

@@ -80,7 +80,10 @@ export const useMessages = ({ supabaseUserId }: UseMessagesOptions): UseMessages
                         text: newRecord.text,
                         timestamp: newRecord.timestamp,
                         uiComponent: newRecord.ui_component,
-                        groundingChunks: newRecord.grounding_chunks
+                        groundingChunks: newRecord.grounding_chunks,
+                        // Optional fields (may not exist in all deployments)
+                        messageContext: newRecord.message_context,
+                        relatedWorkoutId: newRecord.related_workout_id
                     }];
                 });
             })
@@ -121,7 +124,9 @@ export const useMessages = ({ supabaseUserId }: UseMessagesOptions): UseMessages
                                 text: latestMessage.text,
                                 timestamp: latestMessage.timestamp,
                                 uiComponent: latestMessage.uiComponent,
-                                groundingChunks: latestMessage.groundingChunks
+                                groundingChunks: latestMessage.groundingChunks,
+                                messageContext: latestMessage.messageContext,
+                                relatedWorkoutId: latestMessage.relatedWorkoutId
                             }
                         });
 
@@ -144,13 +149,16 @@ export const useMessages = ({ supabaseUserId }: UseMessagesOptions): UseMessages
 
         try {
             const records = await getSupabaseMessages(supabaseUserId);
-            const formattedMessages: Message[] = records.reverse().map(r => ({
+            const formattedMessages: Message[] = records.reverse().map((r: MessageRecord & any) => ({
                 id: r.message_id,
                 role: r.role as MessageRole,
                 text: r.text,
                 timestamp: r.timestamp,
                 uiComponent: r.ui_component,
-                groundingChunks: r.grounding_chunks
+                groundingChunks: r.grounding_chunks,
+                // Optional fields (may not exist in all deployments)
+                messageContext: r.message_context,
+                relatedWorkoutId: r.related_workout_id
             }));
 
             formattedMessages.forEach(m => savedMessageIdsRef.current.add(m.id));
@@ -165,10 +173,19 @@ export const useMessages = ({ supabaseUserId }: UseMessagesOptions): UseMessages
 
                 return formattedMessages.map(cloudMsg => {
                     const localMsg = prevLocal.find(m => m.id === cloudMsg.id);
-                    if (localMsg && localMsg.uiComponent && !cloudMsg.uiComponent) {
-                        return { ...cloudMsg, uiComponent: localMsg.uiComponent };
-                    }
-                    return cloudMsg;
+                    if (!localMsg) return cloudMsg;
+
+                    // Preserve local-only fields if cloud doesn't have them. This prevents
+                    // guidance messages (messageContext/relatedWorkoutId) from "leaking"
+                    // into main chat after a refresh when cloud rows are missing those columns.
+                    const merged: Message = {
+                        ...cloudMsg,
+                        uiComponent: cloudMsg.uiComponent || localMsg.uiComponent,
+                        messageContext: cloudMsg.messageContext || localMsg.messageContext,
+                        relatedWorkoutId: cloudMsg.relatedWorkoutId || localMsg.relatedWorkoutId,
+                        groundingChunks: cloudMsg.groundingChunks || localMsg.groundingChunks
+                    };
+                    return merged;
                 });
             });
         } catch (error) {
@@ -188,7 +205,9 @@ export const useMessages = ({ supabaseUserId }: UseMessagesOptions): UseMessages
                     text: msg.text,
                     timestamp: msg.timestamp,
                     uiComponent: msg.uiComponent,
-                    groundingChunks: msg.groundingChunks
+                    groundingChunks: msg.groundingChunks,
+                    messageContext: msg.messageContext,
+                    relatedWorkoutId: msg.relatedWorkoutId
                 });
                 savedMessageIdsRef.current.add(msg.id);
             }
