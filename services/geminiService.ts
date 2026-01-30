@@ -2,6 +2,7 @@
 import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
 import { API_KEY, MODEL_CHAT, MODEL_FAST, SYSTEM_INSTRUCTION } from "../constants";
 import { Message, MessageRole, UIComponentData, UserProfile, FitnessStats, LifeContext } from "../types";
+import { getSupportedExerciseNames } from "./exerciseGifService";
 
 const ai = new GoogleGenAI({ apiKey: API_KEY });
 
@@ -52,13 +53,14 @@ export const renderUIFunction: FunctionDeclaration = {
 
           // WorkoutList Props (supports exercises AND mental activities)
           title: { type: Type.STRING },
+          rounds: { type: Type.NUMBER, description: 'Number of rounds to repeat the exercise list (default 1). If the workout has multiple rounds, set this to > 1.' },
           exercises: {
             type: Type.ARRAY,
             description: 'List of activities - can be physical exercises, breathing, meditation, etc. Include restAfter for recovery periods between exercises.',
             items: {
               type: Type.OBJECT,
               properties: {
-                name: { type: Type.STRING, description: 'Exercise name' },
+                name: { type: Type.STRING, description: 'Exercise name. For physical exercises, MUST be one of the names from the [AVAILABLE EXERCISE DATABASE] provided in context.' },
                 reps: { type: Type.STRING, description: 'Number of repetitions (e.g., "10 reps", "8 reps per leg")' },
                 duration: { type: Type.STRING, description: 'Duration for time-based exercises (e.g., "30 seconds", "1 minute")' },
                 restAfter: { type: Type.NUMBER, description: 'Rest period in seconds after this exercise (e.g., 30 for 30 seconds rest). Include this for proper recovery pacing.' }
@@ -590,6 +592,26 @@ INSTRUCTION: Subtly encourage sign-in for personalization and progress tracking 
           systemContext += `\n\nUSER STATE: New user - use action-parallel approach, deliver value first.`;
         }
       }
+    }
+
+    // Inject Available Exercise Database (Menu-based generation)
+    // This allows Gemini to know exactly what exercises we have visuals for.
+    try {
+      const availableExercises = await getSupportedExerciseNames();
+      if (availableExercises.length > 0) {
+        // Join with a separator that is token-efficient but readable
+        const exerciseList = availableExercises.join(', ');
+        systemContext += `\n\n[AVAILABLE EXERCISE DATABASE]
+The following is the COMPLETE LIST of supported physical exercises.
+When generating a workout with physical exercises, you MUST strictly choose names from this list to ensure we can show a demonstration GIF.
+If the user asks for an exercise not on this list, map it to the closest match from this list.
+
+${exerciseList}
+
+INSTRUCTION: Use ONLY these names for physical exercises in 'workoutList' or 'startGuidedActivity'.`;
+      }
+    } catch (e) {
+      console.warn("Failed to inject exercise database", e);
     }
 
     // Convert internal message format to Gemini API format

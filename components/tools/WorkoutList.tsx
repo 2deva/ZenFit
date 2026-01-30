@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Check, Dumbbell, Clock, Save, BookmarkCheck, Play, Pause, SkipForward, RotateCcw, Activity, Volume2, Mic, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
 import { Button } from '../ui/Button';
+import { ExerciseGuide } from './ExerciseGuide';
+
 
 interface Exercise {
     name: string;
@@ -17,6 +19,7 @@ interface WorkoutListProps {
     onComplete?: (data: { workoutType: string; durationSeconds: number; exercises: Exercise[]; goalType?: string; goalIds?: string[] }) => void;
     onProgressChange?: (progress: { title: string; completedExercises: string[]; totalExercises: number }) => void;
 
+    rounds?: number;
     // Goal metadata (for LifeContext integration)
     goalType?: string;
     goalIds?: string[];
@@ -142,6 +145,7 @@ const extractDurationInfo = (exercise: Exercise): { duration: number; cleanName:
 
 import { getWorkoutProgress, setWorkoutProgress } from '../../services/storageService';
 import { syncWorkoutProgressFromCloud, syncWorkoutProgressToCloud } from '../../services/persistenceService';
+
 import { useAppContext } from '../../contexts/AppContext';
 
 // Helper to get saved state (checks Supabase first for cross-device sync, then localStorage)
@@ -221,6 +225,7 @@ const LiveModeIndicator: React.FC<{ aiState?: string }> = ({ aiState }) => {
 export const WorkoutList: React.FC<WorkoutListProps> = ({
     title = "Workout",
     exercises,
+    rounds = 1,
     workoutId,
     userId,
     onComplete,
@@ -242,7 +247,25 @@ export const WorkoutList: React.FC<WorkoutListProps> = ({
 }) => {
     // Access global robust state
     const { workoutProgress } = useAppContext();
-    const validExercises = Array.isArray(exercises) ? exercises : [];
+
+    // Flatten exercises based on rounds
+    // If rounds > 1, repeat the exercise list n times
+    const validExercises = React.useMemo(() => {
+        if (!Array.isArray(exercises) || exercises.length === 0) return [];
+        if (rounds <= 1) return exercises;
+
+        const flattened: Exercise[] = [];
+        // Loop for each round
+        for (let r = 0; r < rounds; r++) {
+            // Add exercises for this round
+            exercises.forEach(ex => {
+                flattened.push({ ...ex }); // Clone to avoid ref issues
+            });
+            // Optional: Add a "Round Break" rest item between rounds if not last round?
+            // For now, let's keep it simple. The schema allows 'restAfter' on items.
+        }
+        return flattened;
+    }, [exercises, rounds]);
 
     if (validExercises.length === 0) {
         return (
@@ -376,6 +399,7 @@ export const WorkoutList: React.FC<WorkoutListProps> = ({
     });
 
     const [isSaved, setIsSaved] = useState(false);
+
     const scrollContainerRef = useRef<HTMLDivElement>(null);
     const hasCalledOnComplete = useRef(false);
     const onProgressChangeRef = useRef(onProgressChange);
@@ -735,6 +759,15 @@ export const WorkoutList: React.FC<WorkoutListProps> = ({
                                                     </span>
                                                 )}
                                             </div>
+                                        )}
+
+                                        {/* Exercise demo - active non-rest only */}
+                                        {!isRest && (
+                                            <ExerciseGuide
+                                                key={durationInfo.cleanName}
+                                                exerciseName={durationInfo.cleanName}
+                                                className="mb-4 w-full max-w-[240px]"
+                                            />
                                         )}
 
                                         {/* Timer and Controls - Horizontally aligned */}

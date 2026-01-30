@@ -212,29 +212,59 @@ export const useLiveSession = ({
         const minDelay = cueType === 'count' ? 100 : 500; // Shorter delay for counting, longer for instructions
 
         const sendCue = () => {
-          // Prefix all guidance cues with [SPEAK]: to trigger exact speech behavior
-          // This tells Gemini to speak ONLY the text after the prefix, no additions
-          const cueToSend = `[SPEAK]: ${text}`;
-
-          // Send as user input - Gemini will respond by speaking it
-          // System instructions tell Gemini to speak guidance cues directly without conversational responses
-          sessionRef.current.sendClientContent({
-            turns: [{
-              role: 'user',
-              parts: [{ text: cueToSend }]
-            }],
-            turnComplete: true // Allow Gemini to process and respond with speech
-          });
-
-          // Mark that we're expecting a guidance response and guidance is active
-          isExpectingGuidanceResponseRef.current = true;
-          // Ensure guidance active state is set (safety check)
-          if (!isGuidanceActiveRef.current) {
-            isGuidanceActiveRef.current = true;
+          // Double-check session is still ready before sending
+          if (!sessionRef.current || !isConnectedRef.current || !isSessionReadyRef.current) {
+            console.warn(`LiveSession: Session became unavailable before sending cue [${cueType}]`);
+            return;
           }
 
-          lastGuidanceCueTimeRef.current = Date.now();
-          console.log(`LiveSession: ✅ Successfully sent guidance cue [${cueType}] to Gemini for TTS`);
+          try {
+            // Prefix all guidance cues with [SPEAK]: to trigger exact speech behavior
+            // This tells Gemini to speak ONLY the text after the prefix, no additions
+            const cueToSend = `[SPEAK]: ${text}`;
+
+            // Send as user input - Gemini will respond by speaking it
+            // System instructions tell Gemini to speak guidance cues directly without conversational responses
+            sessionRef.current.sendClientContent({
+              turns: [{
+                role: 'user',
+                parts: [{ text: cueToSend }]
+              }],
+              turnComplete: true // Allow Gemini to process and respond with speech
+            });
+
+            // Mark that we're expecting a guidance response and guidance is active
+            isExpectingGuidanceResponseRef.current = true;
+            // Ensure guidance active state is set (safety check)
+            if (!isGuidanceActiveRef.current) {
+              isGuidanceActiveRef.current = true;
+            }
+
+            lastGuidanceCueTimeRef.current = Date.now();
+            console.log(`LiveSession: ✅ Successfully sent guidance cue [${cueType}] to Gemini for TTS`);
+          } catch (error: any) {
+            const msg = typeof error?.message === 'string' ? error.message : '';
+            const errStr = String(error);
+            
+            // Handle WebSocket closure gracefully
+            if (/CLOSING|CLOSED|WebSocket.*CLOS/i.test(msg) || /CLOSING|CLOSED|WebSocket.*CLOS/i.test(errStr)) {
+              console.warn(`LiveSession: WebSocket closed while sending guidance cue [${cueType}] - will reconnect`);
+              isSessionReadyRef.current = false;
+              
+              // If guidance is active, pause it and trigger reconnection
+              const executor = getGuidanceExecutor();
+              const progress = executor.getProgress();
+              if ((progress.status === 'active' || progress.status === 'paused') && !manualDisconnectRef.current) {
+                if (progress.status === 'active') {
+                  executor.pause();
+                }
+                // Trigger reconnection
+                setTimeout(() => disconnect(false), 0);
+              }
+            } else {
+              console.error('LiveSession: ❌ Failed to send guidance cue:', error);
+            }
+          }
         };
 
         if (timeSinceLastCue < minDelay) {
@@ -253,6 +283,15 @@ export const useLiveSession = ({
       }
     } else {
       console.warn(`LiveSession: ❌ Cannot send cue - session not ready. Connected: ${isConnectedRef.current}, Ready: ${isSessionReadyRef.current}, Session: ${!!sessionRef.current}`);
+      
+      // If guidance is active but session is not ready, attempt reconnection
+      const executor = getGuidanceExecutor();
+      const progress = executor.getProgress();
+      if ((progress.status === 'active' || progress.status === 'paused') && !isConnectedRef.current && !manualDisconnectRef.current) {
+        console.log('LiveSession: Guidance active but disconnected - attempting reconnection');
+        // Connect will handle resuming guidance if needed
+        setTimeout(() => connect(), 100);
+      }
     }
   }, []);
 
@@ -418,6 +457,7 @@ export const useLiveSession = ({
   const lastUserMessageRef = useRef<string>('');
   const manualDisconnectRef = useRef<boolean>(false);
   const wsClosingHandledRef = useRef<boolean>(false);
+  const connectFnRef = useRef<(() => Promise<void>) | null>(null);
 
   // State sync refs to avoid reconnecting on state changes
   const isMutedRef = useRef(isMuted);
@@ -902,10 +942,35 @@ export const useLiveSession = ({
       const timeSinceTimer = Date.now() - lastTimerRef.current.timestamp;
       // Only auto-start if timer was shown in last 60 seconds
       if (timeSinceTimer < 60000) {
+        // Check if we need to reconnect first
+        const executor = getGuidanceExecutor();
+        const progress = executor.getProgress();
+        const hasPausedGuidance = progress.status === 'paused';
+        
+        // If guidance is paused and session is disconnected, reconnect first
+        if (hasPausedGuidance && !isConnectedRef.current && connectFnRef.current) {
+          console.log('LiveSession: Reconnecting before resuming guidance for timer');
+          // Connect will handle resuming guidance after connection is established
+          connectFnRef.current().then(() => {
+            // After connection, resume guidance
+            setTimeout(() => {
+              if (guidanceExecutorRef.current) {
+                const exec = guidanceExecutorRef.current;
+                const prog = exec.getProgress();
+                if (prog.status === 'paused') {
+                  resumeGuidance();
+                }
+              }
+            }, 500);
+          }).catch(err => {
+            console.error('LiveSession: Failed to reconnect:', err);
+          });
+          return true; // Handled
+        }
+        
         console.log('LiveSession: Auto-starting guidance for timer on readiness phrase');
 
         const { activityType, config } = lastTimerRef.current;
-        const executor = getGuidanceExecutor();
         const guidanceConfig = createGuidanceConfig(activityType, config);
 
         guidanceExecutorRef.current = executor;
@@ -996,13 +1061,40 @@ export const useLiveSession = ({
       const timeSinceWorkoutList = Date.now() - workoutToUse.timestamp;
       // Only auto-start if workoutList was shown in last 60 seconds
       if (timeSinceWorkoutList < 60000) {
+        // Check if we need to reconnect first
+        const executor = getGuidanceExecutor();
+        const progress = executor.getProgress();
+        const hasPausedGuidance = progress.status === 'paused' && progress.activityType === 'workout';
+        
+        // If guidance is paused and session is disconnected, reconnect first
+        if (hasPausedGuidance && !isConnectedRef.current && connectFnRef.current) {
+          console.log('LiveSession: Reconnecting before resuming workout guidance');
+          // Update lastWorkoutListRef before reconnecting
+          lastWorkoutListRef.current = workoutToUse;
+          // Connect will handle resuming guidance after connection is established
+          connectFnRef.current().then(() => {
+            // After connection, resume guidance
+            setTimeout(() => {
+              if (guidanceExecutorRef.current) {
+                const exec = guidanceExecutorRef.current;
+                const prog = exec.getProgress();
+                if (prog.status === 'paused' && prog.activityType === 'workout') {
+                  resumeGuidance();
+                }
+              }
+            }, 500);
+          }).catch(err => {
+            console.error('LiveSession: Failed to reconnect:', err);
+          });
+          return true; // Handled
+        }
+        
         console.log('LiveSession: Auto-starting guidance on readiness phrase');
 
         // Update lastWorkoutListRef to point to the workout we're using
         // This ensures all callbacks have access to the correct workout data
         lastWorkoutListRef.current = workoutToUse;
 
-        const executor = getGuidanceExecutor();
         const config = createGuidanceConfig('workout', {
           title: workoutToUse.title,
           exercises: workoutToUse.exercises,
@@ -1581,24 +1673,50 @@ export const useLiveSession = ({
                     const pcmBlob = createPcmBlob(inputData);
                     sessionPromise.then(sess => {
                       // Double-check session is still ready before sending
-                      if (isConnectedRef.current && isSessionReadyRef.current) {
+                      if (isConnectedRef.current && isSessionReadyRef.current && sessionRef.current) {
                         try {
+                          // Check if session has a way to verify WebSocket state before sending
+                          // This prevents errors when WebSocket is already closing/closed
                           sess.sendRealtimeInput({ media: pcmBlob });
                         } catch (err: any) {
                           const msg = typeof err?.message === 'string' ? err.message : '';
-                          // If WS is closing/closed, stop trying to send and reset session once.
-                          if (!wsClosingHandledRef.current && /CLOSING|CLOSED/i.test(msg)) {
-                            wsClosingHandledRef.current = true;
-                            isSessionReadyRef.current = false;
-                            if (!manualDisconnectRef.current) {
-                              setTimeout(() => disconnect(false), 0);
+                          const errStr = String(err);
+                          
+                          // If WS is closing/closed, handle gracefully
+                          if (/CLOSING|CLOSED|WebSocket.*CLOS/i.test(msg) || /CLOSING|CLOSED|WebSocket.*CLOS/i.test(errStr)) {
+                            // Only handle once to prevent multiple disconnect calls
+                            if (!wsClosingHandledRef.current) {
+                              wsClosingHandledRef.current = true;
+                              isSessionReadyRef.current = false;
+                              
+                              // If guidance is active, we need to reconnect to continue
+                              const executor = getGuidanceExecutor();
+                              const progress = executor.getProgress();
+                              const hasActiveGuidance = progress.status === 'active' || progress.status === 'paused';
+                              
+                              if (!manualDisconnectRef.current) {
+                                // If guidance is active, attempt reconnection
+                                if (hasActiveGuidance) {
+                                  console.log('LiveSession: WebSocket closed during active guidance - will reconnect');
+                                  // Pause guidance temporarily
+                                  if (progress.status === 'active') {
+                                    executor.pause();
+                                  }
+                                }
+                                // Disconnect and let reconnection logic handle it
+                                setTimeout(() => disconnect(false), 0);
+                              }
                             }
+                            // Silently skip - error already handled
+                            return;
                           }
-                          console.debug('Audio send skipped - connection closing');
+                          // For other errors, log but don't break
+                          console.debug('Audio send error:', err);
                         }
                       }
                     }).catch(() => {
                       // Session promise rejected, connection is gone
+                      // Silently handle - connection will be re-established if needed
                     });
                   }
                 };
@@ -2290,6 +2408,11 @@ export const useLiveSession = ({
     status
   ]);
 
+  // Store connect function in ref for access from other callbacks that are defined earlier
+  useEffect(() => {
+    connectFnRef.current = connect;
+  }, [connect]);
+
   // ──────────────────────────────────────────────────────────────────────────
   // CLEANUP ON UNMOUNT
   // ──────────────────────────────────────────────────────────────────────────
@@ -2365,6 +2488,35 @@ export const useLiveSession = ({
   const resumeGuidance = useCallback(() => {
     if (guidanceExecutorRef.current) {
       const progress = guidanceExecutorRef.current.getProgress();
+      
+      // Check if session is connected before resuming
+      if (!isConnectedRef.current || !isSessionReadyRef.current) {
+        console.warn('LiveSession: Cannot resume guidance - session not connected. Attempting to reconnect...');
+        // Attempt to reconnect if not already connecting
+        if (status !== LiveStatus.CONNECTING && status !== LiveStatus.RECONNECTING && connectFnRef.current) {
+          connectFnRef.current().then(() => {
+            // Retry resume after connection is established
+            setTimeout(() => {
+              if (guidanceExecutorRef.current) {
+                const exec = guidanceExecutorRef.current;
+                const prog = exec.getProgress();
+                if (prog.status === 'paused' && isConnectedRef.current && isSessionReadyRef.current) {
+                  exec.resume();
+                  isGuidanceActiveRef.current = true;
+                  isExpectingGuidanceResponseRef.current = true;
+                  lastGuidanceCueTimeRef.current = Date.now();
+                  startGuidanceKeepalive();
+                  console.log('LiveSession: Resumed guidance executor after reconnection');
+                }
+              }
+            }, 500);
+          }).catch(err => {
+            console.error('LiveSession: Failed to reconnect for guidance resume:', err);
+          });
+        }
+        return;
+      }
+      
       if (progress.status === 'paused') {
         guidanceExecutorRef.current.resume();
         isGuidanceActiveRef.current = true;
@@ -2382,7 +2534,7 @@ export const useLiveSession = ({
         console.log('LiveSession: Started guidance executor');
       }
     }
-  }, []);
+  }, [status, connect]);
 
   const startGuidanceForTimer = useCallback((activityType: string, config: any) => {
     // Start guidance for timer activity if not already started

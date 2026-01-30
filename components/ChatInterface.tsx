@@ -143,9 +143,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     const [shouldAutoScroll, setShouldAutoScroll] = React.useState(true);
     const [unreadCount, setUnreadCount] = React.useState(0);
     const [messagesFromBottom, setMessagesFromBottom] = React.useState(0);
-    const scrollTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
-    const debounceTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
-    const lastScrollTime = React.useRef<number>(0);
+    const previousMessagesLength = React.useRef(0); // Initialize with 0, will be updated in first effect
 
     // Threshold for showing scroll button (only show after scrolling past this many messages)
     const SCROLL_BUTTON_THRESHOLD = 7;
@@ -175,101 +173,23 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             }));
     }, [messages, activeWorkoutMessageId]);
 
-    const previousMessagesLength = React.useRef(filteredMessages.length);
-
     // Threshold for "near bottom" detection (50px as per best practices)
     const BOTTOM_THRESHOLD = 50;
 
-    // Smart scroll with debouncing: Only auto-scroll if user is at bottom or new message is from user
-    React.useEffect(() => {
-        const lastMessage = filteredMessages[filteredMessages.length - 1];
-        const isNewMessage = filteredMessages.length > previousMessagesLength.current;
-        const newMessageCount = filteredMessages.length - previousMessagesLength.current;
-        const isUserMessage = lastMessage?.role === 'user';
-
-        if (isNewMessage) {
-            // Clear existing debounce
-            if (debounceTimeoutRef.current) {
-                clearTimeout(debounceTimeoutRef.current);
-            }
-
-            // Debounce rapid message bursts (wait 100ms for more messages)
-            debounceTimeoutRef.current = setTimeout(() => {
-                // Always scroll for user messages or if already at bottom
-                if (isUserMessage || isAtBottom || shouldAutoScroll) {
-                    scrollToBottom(true);
-                    setUnreadCount(0); // Clear unread when auto-scrolling
-                } else {
-                    // User is scrolled up - increment unread count
-                    setUnreadCount(prev => prev + newMessageCount);
-                }
-                previousMessagesLength.current = filteredMessages.length;
-            }, 100);
-        }
-
-        return () => {
-            if (debounceTimeoutRef.current) {
-                clearTimeout(debounceTimeoutRef.current);
-            }
-        };
-    }, [filteredMessages, isAtBottom, shouldAutoScroll]);
-
-    // Scroll to bottom when typing indicator appears (if at bottom)
-    // Use debouncing to prevent excessive scrolling during rapid typing updates
-    React.useEffect(() => {
-        if (isTyping && isAtBottom) {
-            // Debounce typing indicator scrolls
-            if (debounceTimeoutRef.current) {
-                clearTimeout(debounceTimeoutRef.current);
-            }
-
-            debounceTimeoutRef.current = setTimeout(() => {
-                scrollToBottom(true);
-            }, 150);
-        }
-
-        return () => {
-            if (debounceTimeoutRef.current) {
-                clearTimeout(debounceTimeoutRef.current);
-            }
-        };
-    }, [isTyping, isAtBottom]);
-
-    // Initial scroll to bottom - only on mount
-    React.useEffect(() => {
-        if (filteredMessages.length > 0 && previousMessagesLength.current === 0) {
-            // Small delay to ensure DOM is ready
-            setTimeout(() => {
-                scrollToBottom(false);
-            }, 150);
-        }
-    }, []); // Only on mount
+    // SCROLLING STRATEGY (Restored & Optimized):
+    // We use manual controlled scrolling because 'followOutput' can be unreliable 
+    // with complex dynamic content or initial loading states.
+    // 1. Detect when NEW messages arrive.
+    // 2. Smooth scroll if user is at bottom OR if it's their own message.
+    // 3. Instant scroll on mount.
 
     const scrollToBottom = (smooth: boolean = true) => {
         if (virtuosoRef.current && filteredMessages.length > 0) {
-            const now = Date.now();
-            const timeSinceLastScroll = now - lastScrollTime.current;
-
-            // Adaptive timing: use instant scroll if scrolling frequently (within 500ms)
-            // This prevents animation jank during rapid message bursts
-            const shouldUseSmooth = smooth && timeSinceLastScroll > 500;
-
-            lastScrollTime.current = now;
-
-            if (shouldUseSmooth) {
-                virtuosoRef.current.scrollToIndex({
-                    index: filteredMessages.length - 1,
-                    behavior: 'smooth',
-                    align: 'end'
-                });
-            } else {
-                // Instant scroll for better performance during rapid updates
-                virtuosoRef.current.scrollToIndex({
-                    index: filteredMessages.length - 1,
-                    behavior: 'auto',
-                    align: 'end'
-                });
-            }
+            virtuosoRef.current.scrollToIndex({
+                index: filteredMessages.length - 1,
+                behavior: smooth ? 'smooth' : 'auto',
+                align: 'end'
+            });
         }
     };
 
@@ -293,18 +213,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         const distanceFromBottom = Math.max(0, filteredMessages.length - 1 - range.endIndex);
         setMessagesFromBottom(distanceFromBottom);
 
-        // Threshold-based: consider "at bottom" if within last 2 items (more forgiving)
+        // Threshold-based: consider "at bottom" if within last 2 items
         const isNearBottom = range.endIndex >= filteredMessages.length - 2;
-        if (isNearBottom && !isAtBottom) {
-            setIsAtBottom(true);
+
+        // Only auto-recover auto-scroll if we are VERY close to bottom
+        if (isNearBottom && !shouldAutoScroll) {
             setShouldAutoScroll(true);
             setUnreadCount(0);
-        } else if (!isNearBottom && isAtBottom) {
-            // User scrolled up significantly
-            setIsAtBottom(false);
-            setShouldAutoScroll(false);
         }
-    }, [filteredMessages.length, isAtBottom]);
+    }, [filteredMessages.length, shouldAutoScroll]);
 
     // Keyboard shortcuts: End key to scroll to bottom, Home to top
     React.useEffect(() => {
@@ -336,32 +253,22 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, []);
 
-    // Handle window resize - maintain scroll position
+    // 3. Initial Mount Scroll (Instant) AND Async Load
+    // This needs to run whenever the list GOES from empty to having items to catch the async load.
     React.useEffect(() => {
-        const handleResize = () => {
-            if (isAtBottom && virtuosoRef.current) {
-                // Small delay to let layout settle
-                setTimeout(() => {
-                    scrollToBottom(false);
-                }, 100);
-            }
-        };
-
-        window.addEventListener('resize', handleResize);
-        return () => window.removeEventListener('resize', handleResize);
-    }, [isAtBottom]);
-
-    // Cleanup timeouts on unmount
-    React.useEffect(() => {
-        return () => {
-            if (scrollTimeoutRef.current) {
-                clearTimeout(scrollTimeoutRef.current);
-            }
-            if (debounceTimeoutRef.current) {
-                clearTimeout(debounceTimeoutRef.current);
-            }
-        };
-    }, []);
+        // Only run if we transitioned from no messages to having messages
+        // OR if this is the very first valid render with messages
+        if (filteredMessages.length > 0 && previousMessagesLength.current === 0) {
+            // Short delay to ensure Virtuoso has measured content
+            setTimeout(() => {
+                virtuosoRef.current?.scrollToIndex({
+                    index: filteredMessages.length - 1,
+                    align: 'end',
+                    behavior: 'auto'
+                });
+            }, 50);
+        }
+    }, [filteredMessages.length]);
 
     const handleStarterClick = (message: string, startLiveMode: boolean = false) => {
         if (startLiveMode && onStartLiveMode) {
@@ -551,8 +458,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     data={filteredMessages}
                     className="no-scrollbar"
                     style={{ height: '100%' }}
-                    followOutput={shouldAutoScroll ? "auto" : false}
-                    initialTopMostItemIndex={filteredMessages.length > 0 ? filteredMessages.length - 1 : 0}
+                    // We handle scrolling manually for more control
+                    followOutput={false}
                     alignToBottom={true}
                     rangeChanged={handleRangeChanged}
                     atBottomStateChange={handleAtBottomStateChange}
