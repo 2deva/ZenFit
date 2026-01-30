@@ -13,6 +13,9 @@ interface VoiceControlsProps {
   // Mute control
   isMuted?: boolean;
   onMuteToggle?: () => void;
+  connectionQuality?: 'good' | 'fair' | 'poor';
+  isProcessing?: boolean;
+  errorMessage?: string | null;
 }
 
 export const VoiceControls: React.FC<VoiceControlsProps> = ({
@@ -22,10 +25,28 @@ export const VoiceControls: React.FC<VoiceControlsProps> = ({
   isInterrupted,
   variant = 'overlay',
   isMuted = false,
-  onMuteToggle
+  onMuteToggle,
+  connectionQuality = 'good',
+  isProcessing = false,
+  errorMessage = null
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    // ... animation logic ...
+  }, [status, isInterrupted, audioDataRef]); // (kept simplified for replace block)
+
+  // ... (keep rest of animation logic if not modifying, but I need to match the block correctly)
+  // Actually, I'll just skip the animation logic block in the replacement content if I can target the interface and component definition accurately.
+  // But wait, "ReplacementContent" must be a complete drop-in. I should be careful not to delete the useEffect.
+
+  // Strategy: Update interface and de-structure first. Then update the JSX separately with another call.
+  // Or do it in one go if I can match the surrounding lines.
+
+  // Let's do two edits.
+  // Edit 1: Update Interface and Destructuring.
+
 
   useEffect(() => {
     if (status !== LiveStatus.CONNECTED) {
@@ -114,8 +135,18 @@ export const VoiceControls: React.FC<VoiceControlsProps> = ({
             <span className="font-display text-xs sm:text-sm font-bold text-ink-800 uppercase tracking-wide">
               {isInterrupted ? 'Halted' : 'Live'}
             </span>
-            <span className={`text-[9px] sm:text-[11px] font-body font-medium truncate ${isInterrupted ? 'text-red-500' : 'text-ink-400'}`}>
-              {isInterrupted ? 'Interrupted' : (status === 'connecting' ? 'Connecting...' : 'Listening')}
+            <span className={`text-[9px] sm:text-[11px] font-body font-medium truncate ${isInterrupted || errorMessage ? 'text-red-500' : 'text-ink-400'}`}>
+              {errorMessage ? errorMessage : (
+                isInterrupted ? 'Interrupted' : (
+                  status === LiveStatus.CONNECTING ? 'Connecting...' :
+                    isProcessing ? 'Processing...' : 'Listening'
+                )
+              )}
+              {!isInterrupted && !errorMessage && status === LiveStatus.CONNECTED && (
+                <span className={`ml-1.5 inline-block w-1.5 h-1.5 rounded-full ${connectionQuality === 'good' ? 'bg-green-500' :
+                  connectionQuality === 'fair' ? 'bg-yellow-500' : 'bg-red-500'
+                  }`} title={`Connection: ${connectionQuality}`} />
+              )}
             </span>
           </div>
         </div>

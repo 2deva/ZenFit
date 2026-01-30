@@ -63,6 +63,7 @@ import {
   resetClarification,
   generateClarificationPrompt,
   generateErrorPrompt,
+  shouldAdaptToAudioQuality,
   AudioQualityState,
   ClarificationState
 } from '../services/errorHandlingService';
@@ -160,6 +161,27 @@ export const useLiveSession = ({
   const [paceState, setPaceState] = useState<ActivityPaceState>(createPaceState('normal'));
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [connectionQuality, setConnectionQuality] = useState<'good' | 'fair' | 'poor'>('good');
+
+  // Update connection quality periodically
+  useEffect(() => {
+    if (!isConnectedRef.current) return;
+    const interval = setInterval(() => {
+      const quality = audioQualityRef.current;
+      const adaptation = shouldAdaptToAudioQuality(quality);
+
+      if (!adaptation.shouldAdapt) {
+        setConnectionQuality('good');
+      } else if (adaptation.reason === 'dropouts') {
+        setConnectionQuality('poor');
+      } else {
+        setConnectionQuality('fair');
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [status]);
 
   // Refs for synchronous access
   const isConnectedRef = useRef(false);
@@ -526,6 +548,7 @@ export const useLiveSession = ({
   // ──────────────────────────────────────────────────────────────────────────
 
   const disconnect = useCallback(async (manual: boolean = true) => {
+    setErrorMessage(null);
     manualDisconnectRef.current = manual;
     // Stop keepalive on disconnect
     stopGuidanceKeepalive();
@@ -1335,6 +1358,7 @@ export const useLiveSession = ({
 
     try {
       console.log("Initializing Live Session...");
+      setErrorMessage(null);
       manualDisconnectRef.current = false;
       wsClosingHandledRef.current = false;
 
@@ -1625,6 +1649,7 @@ export const useLiveSession = ({
 
                 // 1. Tool Calls
                 if (msg.toolCall) {
+                  setIsProcessing(false); // Server responded with tool call
                   for (const fc of msg.toolCall.functionCalls) {
                     if (fc.name === 'renderUI') {
                       const args = fc.args as any;
@@ -2013,7 +2038,11 @@ export const useLiveSession = ({
                 if (msg.serverContent?.inputTranscription?.text) {
                   const transcript = msg.serverContent.inputTranscription.text;
                   const isFinal = !!msg.serverContent?.turnComplete;
-                  if (isFinal && transcript.trim()) lastUserMessageRef.current = transcript;
+                  // If user turn is complete, we are now processing
+                  if (isFinal) {
+                    setIsProcessing(true);
+                    if (transcript.trim()) lastUserMessageRef.current = transcript;
+                  }
 
                   // Buffer transcript for session summary
                   bufferTranscript({
@@ -2058,6 +2087,7 @@ export const useLiveSession = ({
                 }
 
                 if (msg.serverContent?.outputTranscription?.text) {
+                  setIsProcessing(false); // Server started sending text
                   const rawAiText = msg.serverContent.outputTranscription.text;
                   // Strip leaked [SPEAK] markers and low-level control tokens like <ctrl46>
                   // so they never appear in chat or guidance UI.
@@ -2085,6 +2115,7 @@ export const useLiveSession = ({
 
                 // 3. Audio Output (skip if muted) - handle async inside IIFE
                 const base64Audio = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
+                if (base64Audio) setIsProcessing(false); // Server started sending audio
                 if (base64Audio && audioContextRef.current && !isMuted) {
                   (async () => {
                     const ctx = audioContextRef.current!;
@@ -2142,6 +2173,7 @@ export const useLiveSession = ({
           onclose: () => {
             console.log("Live Session Closed by Server");
             isSessionReadyRef.current = false; // Stop audio sending immediately
+            setIsProcessing(false); // Reset processing state
 
             // Stop keepalive on disconnect
             stopGuidanceKeepalive();
@@ -2227,6 +2259,7 @@ export const useLiveSession = ({
 
           onerror: (err) => {
             console.error("Live Session Error:", err);
+            setIsProcessing(false); // Reset on error
             if (onErrorRef.current) onErrorRef.current('CONNECTION_ERROR', 'Voice connection error occurred');
           }
         }
@@ -2234,8 +2267,22 @@ export const useLiveSession = ({
 
       sessionPromiseRef.current = sessionPromise;
 
-    } catch (e) {
+    } catch (e: any) {
       console.error("Connection Failed:", e);
+      let errorMsg = 'Failed to start Live session. Please try again.';
+      if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+        errorMsg = 'Microphone access denied. Please allow microphone access.';
+        if (onErrorRef.current) onErrorRef.current('PERMISSION_DENIED', errorMsg);
+      } else if (e.name === 'NotFoundError' || e.name === 'DevicesNotFoundError') {
+        errorMsg = 'No microphone found. Please check your input devices.';
+        if (onErrorRef.current) onErrorRef.current('NO_DEVICE', errorMsg);
+      } else {
+        if (onErrorRef.current) onErrorRef.current('CONNECTION_FAILED', errorMsg);
+      }
+      setErrorMessage(errorMsg);
+      setStatus(LiveStatus.DISCONNECTED);
+      setIsProcessing(false);
+      isConnectedRef.current = false;
     }
   }, [
     disconnect,
@@ -2416,6 +2463,9 @@ export const useLiveSession = ({
     audioQuality: audioQualityRef.current,
     turnCount: sessionStateRef.current.turnCount,
     isSpeaking, // Export speech state
+    isProcessing, // Export processing state
+    connectionQuality, // Export connection quality state
+    errorMessage, // Export error message
 
     // Guidance state for message categorization
     isExpectingGuidanceResponse: isExpectingGuidanceResponseRef,

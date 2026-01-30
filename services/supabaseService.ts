@@ -114,7 +114,7 @@ export const getUserByFirebaseUid = async (firebaseUid: string): Promise<User | 
             .from('users')
             .select('*')
             .eq('firebase_uid', firebaseUid)
-            .single();
+            .maybeSingle();
 
         if (error && error.code !== 'PGRST116') throw error;
         return data;
@@ -226,7 +226,7 @@ export const getWorkoutProgress = async (
             .select('completed_indices, active_idx')
             .eq('user_id', userId)
             .eq('workout_id', workoutId)
-            .single();
+            .maybeSingle();
 
         if (error && error.code !== 'PGRST116') throw error; // PGRST116 = no rows
         if (!data) return null;
@@ -332,7 +332,7 @@ export const getStreak = async (userId: string, habitType: string): Promise<Habi
             .select('*')
             .eq('user_id', userId)
             .eq('habit_type', habitType)
-            .single();
+            .maybeSingle();
 
         if (error && error.code !== 'PGRST116') throw error;
         return data;
@@ -695,7 +695,7 @@ export const getOnboardingState = async (userId: string): Promise<OnboardingStat
             .from('user_onboarding_state')
             .select('*')
             .eq('user_id', userId)
-            .single();
+            .maybeSingle();
 
         if (error && error.code !== 'PGRST116') throw error;
         if (!data) return null;

@@ -49,7 +49,10 @@ export const AppLayout: React.FC = () => {
         liveIsMuted,
         setLiveIsMuted,
         handleActivityControl,
-        startLiveModeAndSendMessage
+        startLiveModeAndSendMessage,
+        connectionQuality,
+        isProcessing,
+        errorMessage
     } = useLiveSessionContext();
 
     const [isFocused, setIsFocused] = React.useState(false);
@@ -181,7 +184,7 @@ export const AppLayout: React.FC = () => {
 
             {/* Floating Input Capsule - Fixed at bottom, hidden on empty state */}
             <div ref={inputContainerRef} className={`flex-shrink-0 px-3 sm:px-4 py-3 sm:py-4 z-30 relative transition-opacity duration-300 ${messages.length === 0 ? 'opacity-0 pointer-events-none' : 'opacity-100'}`} style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
-                {liveStatus === LiveStatus.DISCONNECTED ? (
+                {(liveStatus === LiveStatus.DISCONNECTED && !errorMessage) ? (
                     <div
                         className={`
                         mx-auto bg-white/95 backdrop-blur-xl rounded-2xl sm:rounded-[28px] p-1.5 sm:p-2 flex items-center space-x-1.5 sm:space-x-2 transition-all duration-500 ease-out
@@ -249,6 +252,9 @@ export const AppLayout: React.FC = () => {
                             variant="inline"
                             isMuted={liveIsMuted}
                             onMuteToggle={() => setLiveIsMuted(!liveIsMuted)}
+                            connectionQuality={liveStatus === LiveStatus.CONNECTED ? connectionQuality : undefined}
+                            isProcessing={isProcessing}
+                            errorMessage={errorMessage}
                         />
                     </div>
                 )}

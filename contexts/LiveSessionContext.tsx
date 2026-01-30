@@ -32,6 +32,9 @@ interface LiveSessionContextType {
     isExpectingGuidanceResponse: React.MutableRefObject<boolean>;
     isGuidanceActive: React.MutableRefObject<boolean>;
     sendMessageToLive: ((text: string) => void) | null;
+    connectionQuality: 'good' | 'fair' | 'poor';
+    isProcessing: boolean;
+    errorMessage: string | null;
 }
 
 const LiveSessionContext = createContext<LiveSessionContextType | undefined>(undefined);
@@ -78,7 +81,7 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
     // Track the most recent tool message id (timer/workoutList) as the guidance thread id.
     // This covers cases where guidance restarts without a new tool call (e.g., resume).
     const lastGuidanceThreadIdRef = useRef<string | null>(null);
-    
+
     // Track workout completion to prevent duplicate handling
     const workoutCompletionHandledRef = useRef<Set<string>>(new Set());
 
@@ -220,8 +223,8 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                 setMessages(prev => [...prev, newMessage]);
             }
         }
-    // NOTE: Don't include `isGuidanceActive` in deps here (it's a ref and declared later),
-    // and referencing it in the deps array would hit TDZ / "used before declaration".
+        // NOTE: Don't include `isGuidanceActive` in deps here (it's a ref and declared later),
+        // and referencing it in the deps array would hit TDZ / "used before declaration".
     }, [setMessages, activeWorkoutMessageIdRef, currentLiveModelMessageIdRef, currentLiveUserMessageIdRef]);
 
     const handleLiveToolCall = useCallback((component: UIComponentData) => {
@@ -319,7 +322,7 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
 
     // Placeholder ref for the hook's return value
     const isGuidanceActiveRef = useRef<boolean>(false);
-    
+
     // Refs for live mode values (needed in callbacks before hook returns them)
     const liveStatusRef = useRef<LiveStatus>(LiveStatus.DISCONNECTED);
     const sendMessageToLiveRef = useRef<((text: string) => void) | null>(null);
@@ -345,6 +348,9 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
         resumeGuidance,
         startGuidanceForTimer,
         stopGuidance,
+        connectionQuality,
+        isProcessing,
+        errorMessage
     } = useLiveSession({
         onTranscription: handleLiveTranscription,
         onAudioData: (data) => {
@@ -383,7 +389,7 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                 });
 
                 // DETECT WORKOUT COMPLETION (all exercises done)
-                const allExercisesCompleted = completedExercises.length >= config.exercises.length || 
+                const allExercisesCompleted = completedExercises.length >= config.exercises.length ||
                     completedIndices.length >= config.exercises.length;
 
                 setCurrentWorkoutProgress({
@@ -425,13 +431,13 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                 // HANDLE WORKOUT COMPLETION IN LIVE MODE
                 // Use workout message ID as unique key to prevent duplicate handling
                 const workoutKey = activeWorkoutMessageIdRef.current || config.title || 'workout';
-                
-                if (allExercisesCompleted && supabaseUserId && handleActionWrapper && 
+
+                if (allExercisesCompleted && supabaseUserId && handleActionWrapper &&
                     !workoutCompletionHandledRef.current.has(workoutKey)) {
-                    
+
                     // Mark as handled to prevent duplicates
                     workoutCompletionHandledRef.current.add(workoutKey);
-                    
+
                     // Calculate workout duration
                     const startedAt = config.startedAt || (currentWorkoutProgress?.startedAt || Date.now());
                     const durationSeconds = Math.floor((Date.now() - startedAt) / 1000);
@@ -455,7 +461,7 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                     // Use refs to access liveStatus and sendMessageToLive (they're returned from hook)
                     const currentLiveStatus = liveStatusRef.current;
                     const currentSendMessage = sendMessageToLiveRef.current;
-                    
+
                     if (currentLiveStatus === LiveStatus.CONNECTED && currentSendMessage) {
                         // Get updated streak and achievements
                         const streak = await getStreak(supabaseUserId, 'workout');
@@ -465,7 +471,7 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
 
                         // Build verbal announcement
                         let announcement = `Amazing work! You just completed your ${config.title || 'workout'}! `;
-                        
+
                         // Announce streak
                         if (streakCount > 0) {
                             announcement += `You've built a ${streakCount}-day streak! `;
@@ -476,7 +482,7 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
 
                         // Detect and announce achievements
                         const achievements: string[] = [];
-                        
+
                         if (completedWorkouts === 1) {
                             achievements.push('First Steps - You completed your first workout!');
                         }
@@ -499,10 +505,10 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                             const daysAgo = Math.floor((Date.now() - workoutDate.getTime()) / (1000 * 60 * 60 * 24));
                             return daysAgo <= 7 && w.completed;
                         });
-                        const uniqueDays = new Set(weekWorkouts.map(w => 
+                        const uniqueDays = new Set(weekWorkouts.map(w =>
                             new Date(w.created_at).toISOString().split('T')[0]
                         )).size;
-                        
+
                         if (uniqueDays === 5) {
                             achievements.push('Consistency Champion - 5 workouts this week!');
                         }
@@ -939,7 +945,10 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
         handleVoiceCommand,
         isExpectingGuidanceResponse,
         isGuidanceActive,
-        sendMessageToLive
+        sendMessageToLive,
+        connectionQuality,
+        isProcessing,
+        errorMessage
     };
 
     return (
