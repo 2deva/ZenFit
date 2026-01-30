@@ -75,8 +75,8 @@ const extractDurationInfo = (exercise: Exercise): { duration: number; cleanName:
             let duration = 0;
             let displayDuration = '';
 
-            if (pattern.source.includes(':')) {
-                // mm:ss format
+            if (match[2] !== undefined) {
+                // mm:ss format (match[2] is the seconds part)
                 const minutes = parseInt(match[1]);
                 const seconds = parseInt(match[2]);
                 duration = minutes * 60 + seconds;

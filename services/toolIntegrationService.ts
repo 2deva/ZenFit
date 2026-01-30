@@ -142,7 +142,7 @@ export async function getDashboardSnapshot(
         dashboard: fitnessStats ? generateDashboardProps(fitnessStats) : undefined,
         streakTimeline: { habitName: 'Workout', currentStreak: 0, longestStreak: 0, days: [] },
         habitHeatmap: { habitName: 'Workout', weeks: 12, data: [] },
-        weeklyWorkoutsChart: { chartTitle: 'Workouts Completed (Last 7 Days)', dataKey: 'value', data: [] }
+        weeklyWorkoutsChart: { chartTitle: 'Workouts Completed (Last 7 Days)', dataKey: 'value', data: [], chartType: 'bar' }
       },
       achievements: { unlocked: [], nextUp: [] }
     };
@@ -276,6 +276,7 @@ export async function generateChartProps(
   chartTitle: string;
   dataKey: string;
   data: Array<{ name: string; value: number }>;
+  chartType: 'area' | 'bar' | 'line';
 }> {
   try {
     const recentWorkouts = await getRecentWorkouts(userId, days);
@@ -324,17 +325,26 @@ export async function generateChartProps(
       streak: `Streak Progress (Last ${days} Days)`
     };
 
+    const chartTypes: Record<string, 'area' | 'bar' | 'line'> = {
+      steps: 'bar',
+      workouts: 'bar',
+      activeMinutes: 'area',
+      streak: 'line'
+    };
+
     return {
       chartTitle: titles[metric] || `Progress (Last ${days} Days)`,
       dataKey: 'value',
-      data
+      data,
+      chartType: chartTypes[metric] || 'area'
     };
   } catch (error) {
     console.error('Error generating chart props:', error);
     return {
       chartTitle: `Progress (Last ${days} Days)`,
       dataKey: 'value',
-      data: []
+      data: [],
+      chartType: 'area'
     };
   }
 }

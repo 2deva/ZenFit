@@ -80,10 +80,10 @@ export function ProfileDashboardModal({ isOpen, onClose }: ProfileDashboardModal
       {/* Modal */}
       <div className="relative w-full max-w-3xl max-h-[85vh] bg-white/95 backdrop-blur rounded-3xl shadow-2xl border border-sand-200 overflow-hidden animate-in zoom-in-95 slide-in-from-bottom-4 duration-300">
         {/* Header */}
-        <div className="px-5 sm:px-7 py-4 sm:py-5 border-b border-sand-200 bg-white/70">
-          <div className="flex items-center justify-between gap-4">
+        <div className="px-4 py-3 sm:px-7 sm:py-5 border-b border-sand-200 bg-white/70">
+          <div className="flex items-center justify-between gap-3 sm:gap-4">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-claude-500 to-claude-600 flex items-center justify-center text-white shadow-soft overflow-hidden flex-shrink-0">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-gradient-to-br from-claude-500 to-claude-600 flex items-center justify-center text-white shadow-soft overflow-hidden flex-shrink-0">
                 {user?.photoURL ? (
                   <img src={user.photoURL} alt={user.displayName || 'User'} className="w-full h-full object-cover" />
                 ) : (
@@ -92,32 +92,33 @@ export function ProfileDashboardModal({ isOpen, onClose }: ProfileDashboardModal
               </div>
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <h3 className="font-display font-bold text-ink-900 text-base sm:text-lg truncate">
+                  <h3 className="font-display font-bold text-ink-900 text-sm sm:text-lg truncate">
                     {user?.displayName || 'Your dashboard'}
                   </h3>
                   {isRefreshing && (
                     <span className="text-[10px] sm:text-xs text-ink-400 font-medium">Updating…</span>
                   )}
                 </div>
-                <p className="text-xs sm:text-sm text-ink-400 truncate">
+                <p className="hidden sm:block text-xs sm:text-sm text-ink-400 truncate">
                   Goals, streaks, badges & your momentum — in one place
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2">
               <Button
                 variant="secondary"
-                className="rounded-xl h-9 px-3"
+                className="rounded-xl h-9 w-9 sm:w-auto sm:px-3 px-0 justify-center"
                 onClick={() => {
                   setIsRefreshing(true);
                   refreshDashboardSnapshot({ force: true })
                     .catch(console.warn)
                     .finally(() => setIsRefreshing(false));
                 }}
+                aria-label="Refresh dashboard"
               >
-                <RefreshCw className={`w-4 h-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
-                Refresh
+                <RefreshCw className={`w-4 h-4 flex-shrink-0 text-ink-500 ${isRefreshing ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">Refresh</span>
               </Button>
 
               <Button
@@ -175,6 +176,7 @@ export function ProfileDashboardModal({ isOpen, onClose }: ProfileDashboardModal
                   data={dashboardSnapshot.tools.weeklyWorkoutsChart.data}
                   title={dashboardSnapshot.tools.weeklyWorkoutsChart.chartTitle}
                   dataKey={dashboardSnapshot.tools.weeklyWorkoutsChart.dataKey}
+                  chartType={dashboardSnapshot.tools.weeklyWorkoutsChart.chartType}
                 />
               </div>
 
@@ -233,8 +235,8 @@ export function ProfileDashboardModal({ isOpen, onClose }: ProfileDashboardModal
 
                           const progressPercent =
                             completionsThisWeek != null &&
-                            targetPerWeek != null &&
-                            targetPerWeek > 0
+                              targetPerWeek != null &&
+                              targetPerWeek > 0
                               ? Math.min(100, Math.round((completionsThisWeek / targetPerWeek) * 100))
                               : null;
 
