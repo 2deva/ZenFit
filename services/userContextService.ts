@@ -625,7 +625,8 @@ export const buildLifeContext = async (
             goals: [],
             movementBaseline,
             habits,
-            psychology
+            psychology,
+            suggestedNextAction: 'Optional: suggest one small action (workout, breathing, or stretch).'
         };
     }
 
@@ -679,13 +680,37 @@ export const buildLifeContext = async (
             schedule.hardBusyBlocksSummary += ` The user has an upcoming commitment: ${firstEvent.title} at ${firstEvent.scheduledAt}. Use this as an anchor when suggesting follow-up actions.`;
         }
 
+        // Suggested next action for proactive nudge (resolution adherence)
+        const hasMovementToday = memContext?.recentWorkouts?.some(w => w.daysAgo === 0 && w.completed) ?? false;
+        const noMovementToday = !hasMovementToday;
+        const streak = Math.max(0, ...lifeContextGoals.map(g => g.currentStreak ?? 0));
+        const now = new Date();
+        const currentHour = now.getHours();
+        const inPreferredWindow = schedule.preferredTrainingWindows?.some(w => {
+            const [startH] = (w.start || '0:00').split(':').map(Number);
+            const [endH] = (w.end || '23:59').split(':').map(Number);
+            return currentHour >= startH && currentHour <= endH;
+        }) ?? false;
+
+        let suggestedNextAction: string;
+        if (noMovementToday) {
+            suggestedNextAction = 'No movement today — suggest 10-min session (or 5-min stretch/breathing).';
+        } else if (streak > 0) {
+            suggestedNextAction = `${streak}-day streak — nudge to maintain (one more session today).`;
+        } else if (inPreferredWindow) {
+            suggestedNextAction = 'Preferred window (e.g. evening) — suggest session.';
+        } else {
+            suggestedNextAction = 'Optional: suggest one small action (workout, breathing, or stretch).';
+        }
+
         return {
             profile,
             schedule,
             goals: lifeContextGoals,
             movementBaseline,
             habits,
-            psychology
+            psychology,
+            suggestedNextAction
         };
     } catch (e) {
         console.error('Error building LifeContext:', e);
@@ -701,7 +726,8 @@ export const buildLifeContext = async (
             goals: [],
             movementBaseline,
             habits,
-            psychology
+            psychology,
+            suggestedNextAction: 'Optional: suggest one small action (workout, breathing, or stretch).'
         };
     }
 };

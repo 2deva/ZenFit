@@ -260,6 +260,13 @@ export const AppLayout: React.FC = () => {
                 )}
             </div>
 
+            {/* Wellness disclaimer (general wellness, not medical advice) */}
+            <footer className="flex-shrink-0 px-3 sm:px-4 py-2 text-center">
+                <p className="text-[10px] sm:text-xs text-ink-400 font-body max-w-2xl mx-auto">
+                    ZenFit is for general wellness only and not a substitute for medical advice. Consult a healthcare provider for health concerns and stop any activity if you feel pain or discomfort
+                </p>
+            </footer>
+
             {/* Delete Confirmation Modal */}
             {showDeleteConfirm && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">

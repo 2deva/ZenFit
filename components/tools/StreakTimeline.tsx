@@ -73,6 +73,7 @@ export const StreakTimeline: React.FC<StreakTimelineProps> = React.memo(({
                         <p className="text-[10px] sm:text-xs text-ink-400 font-body">
                             {currentStreak > 0 ? `${currentStreak} day${currentStreak > 1 ? 's' : ''} and counting!` : 'Start your streak today'}
                         </p>
+                        <p className="text-[9px] sm:text-[10px] text-ink-300 font-body mt-0.5">One session per day keeps your streak.</p>
                     </div>
                 </div>
             </div>

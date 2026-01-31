@@ -155,6 +155,8 @@ export interface LifeContext {
   movementBaseline: LifeContextMovementBaseline;
   habits: LifeContextHabits;
   psychology: LifeContextPsychology;
+  /** One-line instruction for the model, e.g. "No movement today — suggest 10-min session" or "2-day streak — nudge to maintain". */
+  suggestedNextAction?: string;
 }
 
 export enum LiveStatus {

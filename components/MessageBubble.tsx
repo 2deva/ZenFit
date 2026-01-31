@@ -14,6 +14,7 @@ import { HabitHeatmap } from './tools/HabitHeatmap';
 import { AchievementBadge } from './tools/AchievementBadge';
 import { MapPin, ArrowUpRight, Sparkles } from 'lucide-react';
 import { ErrorBoundary } from './ErrorBoundary';
+import { ACTIONS } from '../constants/app';
 
 interface MessageBubbleProps {
   message: Message;
@@ -88,8 +89,13 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                   meta: component.props.meta
                 })}
                 // Controlled state (synced with guidance)
-                controlledIsRunning={activeTimer?.isRunning}
-                controlledTimeLeft={activeTimer?.remainingSeconds}
+                controlledIsRunning={(activeTimer?.label || 'Timer') === (component.props.label || 'Timer') ? activeTimer?.isRunning : undefined}
+                controlledTimeLeft={(activeTimer?.label || 'Timer') === (component.props.label || 'Timer') ? activeTimer?.remainingSeconds : undefined}
+                controlledIsCompleted={
+                  (activeTimer?.label || 'Timer') === (component.props.label || 'Timer')
+                    ? activeTimer?.remainingSeconds === 0 && !activeTimer?.isRunning
+                    : undefined
+                }
                 // Live Mode Integration
                 isLiveMode={isLiveMode}
                 audioDataRef={audioDataRef}
@@ -100,7 +106,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                 guidanceMessages={guidanceMessages}
               />;
             case 'chart':
-              return <ChartWidget data={component.props.data} title={component.props.chartTitle || component.props.title} dataKey={component.props.dataKey} />;
+              return <ChartWidget
+                data={component.props.data ?? []}
+                title={component.props.chartTitle || component.props.title}
+                dataKey={component.props.dataKey}
+                emptyMessage={component.props.emptyMessage}
+                chartType={component.props.chartType}
+                color={component.props.color}
+                onEmptyCtaClick={onAction ? () => onAction(ACTIONS.ADD_MESSAGE, { text: 'I want to do a short workout' }) : undefined}
+              />;
             case 'dashboard':
               return <DashboardWidget {...component.props} />;
             case 'workoutList':

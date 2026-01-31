@@ -104,6 +104,11 @@ export const createActionHandlers = (options: ActionHandlersOptions, timerActivi
             await handleSendMessage(text, newProfile);
         },
 
+        [ACTIONS.ADD_MESSAGE]: async (data: { text?: string } | string) => {
+            const text = typeof data === 'object' && data?.text ? data.text : String(data ?? '');
+            if (text) await handleSendMessage(text);
+        },
+
         [ACTIONS.GENERATE_WORKOUT]: async (data: Record<string, string>) => {
             addUIInteraction('workoutBuilder');
 
@@ -232,156 +237,69 @@ export const createActionHandlers = (options: ActionHandlersOptions, timerActivi
                 }
             }
 
-            // Defaults for guests
+            // Defaults
             let streakCount: number = NUMBERS.DEFAULT_STREAK_COUNT;
             let longestStreak: number = NUMBERS.DEFAULT_STREAK_COUNT;
-            let recentWorkouts: any[] = [];
-            let achievements: Array<{ type: string; props: any }> = [];
-
+            
             if (supabaseUserId) {
-                // ... (Existing Supabase logic for logging and streaks) ...
-                let goalIds: string[] = data.goalIds || [];
-                // ... (Goal inference logic) ...
-                if (goalIds.length === 0) {
-                    try {
-                        const activeGoals = await getUserGoals(supabaseUserId);
-                        if (activeGoals.length > 0) {
-                            const inferredType = data.goalType || normalizeGoalType(data.label || '');
-                            const matchingGoals = activeGoals.filter(g => normalizeGoalType(g.goal_type) === inferredType);
-                            if (matchingGoals.length > 0 && inferredType !== 'other') {
-                                goalIds = matchingGoals.map(g => g.id);
-                            } else {
-                                const mentalGoals = activeGoals.filter(g => {
-                                    const gType = normalizeGoalType(g.goal_type);
-                                    return gType === 'mindfulness' || gType === 'stress' || gType === 'sleep' || gType === 'recovery';
-                                });
-                                goalIds = mentalGoals.length > 0 ? mentalGoals.map(g => g.id) : activeGoals.map(g => g.id);
-                            }
-                        }
-                    } catch (e) {
-                        console.warn('TIMER_COMPLETE: Failed to load active goals for tagging', e);
-                    }
-                }
-
-                const workoutType = data.goalType || normalizeGoalType(data.label || 'timer');
-                await logWorkoutSession(supabaseUserId, {
-                    workoutType: workoutType === 'other' ? 'mindfulness' : workoutType,
-                    durationSeconds: data.durationSeconds,
-                    completed: true,
-                    exercises: [],
-                    goalIds
-                });
-
-                if (onboardingState && !onboardingState.firstWorkoutCompletedAt) {
-                    await updateOnboardingState(supabaseUserId, {
-                        firstWorkoutCompletedAt: new Date().toISOString()
+                try {
+                    // Log session
+                    const workoutType = data.goalType || normalizeGoalType(data.label || 'timer');
+                    const goalIds = data.goalIds || [];
+                    
+                    await logWorkoutSession(supabaseUserId, {
+                        workoutType: workoutType === 'other' ? 'mindfulness' : workoutType,
+                        durationSeconds: data.durationSeconds || 60,
+                        completed: true,
+                        exercises: [],
+                        goalIds
                     });
-                    const updatedState = await getOnboardingState(supabaseUserId);
-                    if (updatedState) setOnboardingState(updatedState);
-                }
 
-                const streak = await getStreak(supabaseUserId, 'workout');
-                recentWorkouts = await getRecentWorkouts(supabaseUserId, NUMBERS.STREAK_TIMELINE_DAYS);
-                streakCount = streak?.current_streak || NUMBERS.DEFAULT_STREAK_COUNT;
-                longestStreak = streak?.longest_streak || streakCount;
-                const completedWorkouts = recentWorkouts.filter(w => w.completed).length;
+                    // Update onboarding
+                    if (onboardingState && !onboardingState.firstWorkoutCompletedAt) {
+                        await updateOnboardingState(supabaseUserId, {
+                            firstWorkoutCompletedAt: new Date().toISOString()
+                        });
+                        const updatedState = await getOnboardingState(supabaseUserId);
+                        if (updatedState) setOnboardingState(updatedState);
+                    }
 
-                // Detect achievements
-                // First workout achievement
-                if (completedWorkouts === 1) {
-                    const badgeProps = await generateAchievementBadgeProps('first_workout', supabaseUserId);
-                    if (badgeProps.unlocked) achievements.push({ type: 'first_workout', props: badgeProps });
-                }
-
-                // Streak milestones
-                if (streakCount === 7) {
-                    const badgeProps = await generateAchievementBadgeProps('streak_7', supabaseUserId);
-                    if (badgeProps.unlocked) achievements.push({ type: 'streak_7', props: badgeProps });
-                } else if (streakCount === 14) {
-                    const badgeProps = await generateAchievementBadgeProps('streak_14', supabaseUserId);
-                    if (badgeProps.unlocked) achievements.push({ type: 'streak_14', props: badgeProps });
-                } else if (streakCount === 30) {
-                    const badgeProps = await generateAchievementBadgeProps('streak_30', supabaseUserId);
-                    if (badgeProps.unlocked) achievements.push({ type: 'streak_30', props: badgeProps });
-                }
-
-                // Workout count milestones
-                if (completedWorkouts === 10) {
-                    const badgeProps = await generateAchievementBadgeProps('workouts_10', supabaseUserId);
-                    if (badgeProps.unlocked) achievements.push({ type: 'workouts_10', props: badgeProps });
-                } else if (completedWorkouts === 25) {
-                    const badgeProps = await generateAchievementBadgeProps('workouts_25', supabaseUserId);
-                    if (badgeProps.unlocked) achievements.push({ type: 'workouts_25', props: badgeProps });
-                }
-
-                // Consistency achievement (5+ workouts in last week)
-                const weekWorkouts = recentWorkouts.filter(w => {
-                    const workoutDate = new Date(w.created_at);
-                    const daysAgo = Math.floor((Date.now() - workoutDate.getTime()) / (1000 * 60 * 60 * 24));
-                    return daysAgo <= 7 && w.completed;
-                });
-                const uniqueDays = new Set(weekWorkouts.map(w =>
-                    new Date(w.created_at).toISOString().split('T')[0]
-                )).size;
-
-                if (uniqueDays === 5) {
-                    const badgeProps = await generateAchievementBadgeProps('consistency_week', supabaseUserId);
-                    if (badgeProps.unlocked) achievements.push({ type: 'consistency_week', props: badgeProps });
+                    // Get streaks for celebration
+                    const streak = await getStreak(supabaseUserId, workoutType === 'other' ? 'mindfulness' : workoutType);
+                    if (streak) {
+                        streakCount = streak.current_streak;
+                        longestStreak = streak.longest_streak;
+                    }
+                } catch (e) {
+                    console.warn('[TIMER_COMPLETE] Logging/Streak error:', e);
                 }
             }
 
-            // Build days array for StreakTimeline (Guest gets empty/default)
-            const days = Array.from({ length: NUMBERS.STREAK_TIMELINE_DAYS }, (_, i) => {
-                const date = new Date();
-                date.setDate(date.getDate() - (NUMBERS.STREAK_TIMELINE_DAYS - 1 - i));
-                const dateStr = date.toISOString().split('T')[0];
-                const hasWorkout = recentWorkouts.some(w =>
-                    new Date(w.created_at).toISOString().split('T')[0] === dateStr && w.completed
-                );
-                return { date: dateStr, completed: hasWorkout };
-            });
-
             const workoutType = data.goalType || normalizeGoalType(data.label || 'timer');
-            const isMentalSession = ['mindfulness', 'sleep', 'stress', 'recovery'].includes(normalizeGoalType(workoutType));
+            const isMentalSession = ['mindfulness', 'meditation', 'breathing', 'sleep', 'stress', 'recovery'].includes(normalizeGoalType(workoutType));
 
-            // Build celebration message
+            // Celebration Message
             let celebrationText = '';
-
             if (isMentalSession) {
                 celebrationText = `🌿 **Wonderful practice.** You've given yourself a moment of calm.\n\n`;
             } else {
                 celebrationText = `🎉 **Well done!** You completed your ${data.label || 'session'}!\n\n`;
             }
 
-            if (achievements.length > 0) {
-                celebrationText += `**Achievement Unlocked!** 🏆\n\n`;
-            }
-
-            if (supabaseUserId) {
-                celebrationText += `You've built a **${streakCount}-day streak** — every session counts! ${streakCount >= longestStreak ? "That's your best streak ever! 🏆" : `Your best is ${longestStreak} days — keep going!`}\n\nHere's your progress:`;
-            } else {
-                celebrationText += `A great session! **Log in** to start tracking your streaks and progress over time.`;
+            if (supabaseUserId && streakCount > 0) {
+                celebrationText += `You've built a **${streakCount}-day streak**! ${streakCount >= longestStreak ? "That's your best ever! 🏆" : "Keep it up!"}`;
             }
 
             const celebrationMsg: Message = {
                 id: uuidv4(),
                 role: MessageRole.MODEL,
                 text: celebrationText,
-                timestamp: Date.now(),
-                uiComponent: {
-                    type: 'streakTimeline',
-                    props: {
-                        habitName: isMentalSession ? 'Mindfulness' : 'Workout',
-                        currentStreak: streakCount,
-                        longestStreak: longestStreak,
-                        days: days
-                    }
-                } // UI component is safe to render even with empty data (it handles 0 streaks)
+                timestamp: Date.now()
             };
 
             setMessages((prev: Message[]) => [...prev, celebrationMsg]);
 
-            // Personalized Recommendation (Using same logic as WORKOUT_COMPLETE)
+            // Next Steps (Reflection or Cooldown)
             if (isMentalSession) {
                 const reflectionMsg: Message = {
                     id: uuidv4(),
@@ -393,28 +311,28 @@ export const createActionHandlers = (options: ActionHandlersOptions, timerActivi
                     setMessages((prev: Message[]) => [...prev, reflectionMsg]);
                 }, 1500);
             } else {
-                // For meaningful physical timers (e.g. "HIIT Timer"), suggest cooldown. 
-                // Simple timers might not need it, but we'll offer it for consistency if physical.
-                const cooldownDuration = 2;
-                const cooldownLabel = `Breathing Practice (${cooldownDuration} min)`;
+                // Determine cooldown duration
+                const cooldownDuration = 2; // mins
+                const cooldownLabel = "Breathing Practice";
+                
                 const cooldownTimerProps = {
-                    duration: cooldownDuration * 60,
-                    label: cooldownLabel,
-                    meta: {
+                     duration: cooldownDuration * 60,
+                     label: cooldownLabel,
+                     meta: {
                         mindfulConfig: {
                             intent: 'breathing_reset',
                             totalMinutes: cooldownDuration,
                             guidanceStyle: 'light',
                             pattern: 'calming'
                         }
-                    }
+                     }
                 };
 
                 const cooldownMessage: Message = {
                     id: uuidv4(),
                     role: MessageRole.MODEL,
                     text: `✨ How about a quick ${cooldownDuration}-minute breathing cooldown to help your body and mind recover?`,
-                    timestamp: Date.now(),
+                    timestamp: Date.now() + 100, // slight delay
                     uiComponent: {
                         type: 'timer',
                         props: cooldownTimerProps
@@ -422,293 +340,254 @@ export const createActionHandlers = (options: ActionHandlersOptions, timerActivi
                 };
                 setMessages((prev: Message[]) => [...prev, cooldownMessage]);
             }
-
-            // ADDED: Proactively suggested Habit Heatmap / Badges for signed-in users only
-            if (supabaseUserId) {
-                // Add achievement badges if any unlocked
-                for (const achievement of achievements) {
-                    const achievementMsg: Message = {
-                        id: uuidv4(),
-                        role: MessageRole.MODEL,
-                        text: `🏆 **Achievement Unlocked!**\n\n${achievement.props.title}${achievement.props.description ? `\n${achievement.props.description}` : ''}`,
-                        timestamp: Date.now(),
-                        uiComponent: {
-                            type: 'achievementBadge',
-                            props: achievement.props
-                        }
-                    };
-                    setMessages((prev: Message[]) => [...prev, achievementMsg]);
-                }
-
-                // Proactively show habit heatmap if user has been active for 2+ weeks
-                const completedWorkouts = recentWorkouts.filter(w => w.completed).length;
-                if (completedWorkouts >= 10) {
-                    const heatmapProps = await generateHabitHeatmapProps('workout', supabaseUserId, 12);
-                    if (heatmapProps.data.length > 0) {
-                        const heatmapMsg: Message = {
-                            id: uuidv4(),
-                            role: MessageRole.MODEL,
-                            text: `Here's your activity pattern over the last 12 weeks. Consistency is key! 💪`,
-                            timestamp: Date.now(),
-                            uiComponent: {
-                                type: 'habitHeatmap',
-                                props: heatmapProps
-                            }
-                        };
-                        setTimeout(() => {
-                            setMessages((prev: Message[]) => [...prev, heatmapMsg]);
-                        }, 2000);
-                    }
-                }
-            }
         },
 
-        [ACTIONS.WORKOUT_PROGRESS_CHANGE]: (data: { completedExercises: string[] }) => {
-            setCurrentWorkoutProgress((prev: any) => {
-                if (!prev) return null;
-                return {
-                    ...prev,
-                    exercises: prev.exercises.map((e: any) => ({
-                        ...e,
-                        completed: data.completedExercises.includes(e.name)
-                    }))
-                };
-            });
-        },
+[ACTIONS.WORKOUT_PROGRESS_CHANGE]: (data: { completedExercises: string[] }) => {
+    setCurrentWorkoutProgress((prev: any) => {
+        if (!prev) return null;
+        return {
+            ...prev,
+            exercises: prev.exercises.map((e: any) => ({
+                ...e,
+                completed: data.completedExercises.includes(e.name)
+            }))
+        };
+    });
+},
 
-        [ACTIONS.WORKOUT_COMPLETE]: async (data: any) => {
-            // Default stats for guests
-            let streakCount: number = NUMBERS.DEFAULT_STREAK_COUNT;
-            let longestStreak: number = NUMBERS.DEFAULT_STREAK_COUNT;
-            let recentWorkouts: any[] = [];
-            let achievements: Array<{ type: string; props: any }> = [];
+    [ACTIONS.WORKOUT_COMPLETE]: async (data: any) => {
+        // Default stats for guests
+        let streakCount: number = NUMBERS.DEFAULT_STREAK_COUNT;
+        let longestStreak: number = NUMBERS.DEFAULT_STREAK_COUNT;
+        let recentWorkouts: any[] = [];
+        let achievements: Array<{ type: string; props: any }> = [];
 
-            if (supabaseUserId) {
-                // Use goalIds from the enriched callback if available (from Timer/WorkoutList props).
-                let goalIds: string[] = data.goalIds || [];
+        if (supabaseUserId) {
+            // Use goalIds from the enriched callback if available (from Timer/WorkoutList props).
+            let goalIds: string[] = data.goalIds || [];
 
-                if (goalIds.length === 0) {
-                    // Fallback: infer from workoutType if goalIds weren't provided
-                    try {
-                        const activeGoals = await getUserGoals(supabaseUserId);
-                        if (activeGoals.length > 0) {
-                            const workoutType = (data.workoutType || '') as string;
-                            const workoutPrimaryType = normalizeGoalType(workoutType);
+            if (goalIds.length === 0) {
+                // Fallback: infer from workoutType if goalIds weren't provided
+                try {
+                    const activeGoals = await getUserGoals(supabaseUserId);
+                    if (activeGoals.length > 0) {
+                        const workoutType = (data.workoutType || '') as string;
+                        const workoutPrimaryType = normalizeGoalType(workoutType);
 
-                            const matchingGoals = activeGoals.filter(g => normalizeGoalType(g.goal_type) === workoutPrimaryType);
+                        const matchingGoals = activeGoals.filter(g => normalizeGoalType(g.goal_type) === workoutPrimaryType);
 
-                            if (matchingGoals.length > 0 && workoutPrimaryType !== 'other') {
-                                goalIds = matchingGoals.map(g => g.id);
-                            } else {
-                                // Final fallback: credit all active goals
-                                goalIds = activeGoals.map(g => g.id);
-                            }
+                        if (matchingGoals.length > 0 && workoutPrimaryType !== 'other') {
+                            goalIds = matchingGoals.map(g => g.id);
+                        } else {
+                            // Final fallback: credit all active goals
+                            goalIds = activeGoals.map(g => g.id);
                         }
-                    } catch (e) {
-                        console.warn('WORKOUT_COMPLETE: Failed to load active goals for tagging', e);
                     }
-                }
-
-                // Log the workout session with goal tags
-                await logWorkoutSession(supabaseUserId, {
-                    workoutType: data.workoutType,
-                    durationSeconds: data.durationSeconds,
-                    completed: true,
-                    exercises: data.exercises,
-                    goalIds
-                });
-
-                // Mark first workout completed for onboarding
-                if (onboardingState && !onboardingState.firstWorkoutCompletedAt) {
-                    await updateOnboardingState(supabaseUserId, {
-                        firstWorkoutCompletedAt: new Date().toISOString()
-                    });
-                    const updatedState = await getOnboardingState(supabaseUserId);
-                    if (updatedState) {
-                        setOnboardingState(updatedState);
-                    }
-                }
-
-                // Get updated streak and recent workouts
-                const streak = await getStreak(supabaseUserId, 'workout');
-                recentWorkouts = await getRecentWorkouts(supabaseUserId, NUMBERS.STREAK_TIMELINE_DAYS);
-                streakCount = streak?.current_streak || NUMBERS.DEFAULT_STREAK_COUNT;
-                longestStreak = streak?.longest_streak || streakCount;
-                const completedWorkouts = recentWorkouts.filter(w => w.completed).length;
-
-                // Detect achievements
-                // First workout achievement
-                if (completedWorkouts === 1) {
-                    const badgeProps = await generateAchievementBadgeProps('first_workout', supabaseUserId);
-                    if (badgeProps.unlocked) achievements.push({ type: 'first_workout', props: badgeProps });
-                }
-
-                // Streak milestones
-                if (streakCount === 7) {
-                    const badgeProps = await generateAchievementBadgeProps('streak_7', supabaseUserId);
-                    if (badgeProps.unlocked) achievements.push({ type: 'streak_7', props: badgeProps });
-                } else if (streakCount === 14) {
-                    const badgeProps = await generateAchievementBadgeProps('streak_14', supabaseUserId);
-                    if (badgeProps.unlocked) achievements.push({ type: 'streak_14', props: badgeProps });
-                } else if (streakCount === 30) {
-                    const badgeProps = await generateAchievementBadgeProps('streak_30', supabaseUserId);
-                    if (badgeProps.unlocked) achievements.push({ type: 'streak_30', props: badgeProps });
-                }
-
-                // Workout count milestones
-                if (completedWorkouts === 10) {
-                    const badgeProps = await generateAchievementBadgeProps('workouts_10', supabaseUserId);
-                    if (badgeProps.unlocked) achievements.push({ type: 'workouts_10', props: badgeProps });
-                } else if (completedWorkouts === 25) {
-                    const badgeProps = await generateAchievementBadgeProps('workouts_25', supabaseUserId);
-                    if (badgeProps.unlocked) achievements.push({ type: 'workouts_25', props: badgeProps });
-                }
-
-                // Consistency achievement (5+ workouts in last week)
-                const weekWorkouts = recentWorkouts.filter(w => {
-                    const workoutDate = new Date(w.created_at);
-                    const daysAgo = Math.floor((Date.now() - workoutDate.getTime()) / (1000 * 60 * 60 * 24));
-                    return daysAgo <= 7 && w.completed;
-                });
-                const uniqueDays = new Set(weekWorkouts.map(w =>
-                    new Date(w.created_at).toISOString().split('T')[0]
-                )).size;
-
-                if (uniqueDays === 5) {
-                    const badgeProps = await generateAchievementBadgeProps('consistency_week', supabaseUserId);
-                    if (badgeProps.unlocked) achievements.push({ type: 'consistency_week', props: badgeProps });
+                } catch (e) {
+                    console.warn('WORKOUT_COMPLETE: Failed to load active goals for tagging', e);
                 }
             }
 
-            // Build days array for StreakTimeline (Guest gets empty/default)
-            const days = Array.from({ length: NUMBERS.STREAK_TIMELINE_DAYS }, (_, i) => {
-                const date = new Date();
-                date.setDate(date.getDate() - (NUMBERS.STREAK_TIMELINE_DAYS - 1 - i));
-                const dateStr = date.toISOString().split('T')[0];
-                const hasWorkout = recentWorkouts.some(w =>
-                    new Date(w.created_at).toISOString().split('T')[0] === dateStr && w.completed
-                );
-                return { date: dateStr, completed: hasWorkout };
+            // Log the workout session with goal tags
+            await logWorkoutSession(supabaseUserId, {
+                workoutType: data.workoutType,
+                durationSeconds: data.durationSeconds,
+                completed: true,
+                exercises: data.exercises,
+                goalIds
             });
 
-            const isMentalSession = ['mindfulness', 'sleep', 'stress', 'recovery'].includes(normalizeGoalType(data.workoutType || ''));
-
-            // Build celebration message
-            let celebrationText = '';
-
-            if (isMentalSession) {
-                celebrationText = `🌿 **Wonderful practice.** You've given yourself a moment of calm.\n\n`;
-            } else {
-                celebrationText = `🎉 **Amazing work!** You just crushed that ${data.workoutType} workout!\n\n`;
+            // Mark first workout completed for onboarding
+            if (onboardingState && !onboardingState.firstWorkoutCompletedAt) {
+                await updateOnboardingState(supabaseUserId, {
+                    firstWorkoutCompletedAt: new Date().toISOString()
+                });
+                const updatedState = await getOnboardingState(supabaseUserId);
+                if (updatedState) {
+                    setOnboardingState(updatedState);
+                }
             }
 
-            if (achievements.length > 0) celebrationText += `**Achievement Unlocked!** 🏆\n\n`;
+            // Get updated streak and recent workouts
+            const streak = await getStreak(supabaseUserId, 'workout');
+            recentWorkouts = await getRecentWorkouts(supabaseUserId, NUMBERS.STREAK_TIMELINE_DAYS);
+            streakCount = streak?.current_streak || NUMBERS.DEFAULT_STREAK_COUNT;
+            longestStreak = streak?.longest_streak || streakCount;
+            const completedWorkouts = recentWorkouts.filter(w => w.completed).length;
 
-            if (supabaseUserId) {
-                celebrationText += `You've built a **${streakCount}-day streak** — every day you show up is another proof of your commitment. ${streakCount >= longestStreak ? "That's your best streak ever! 🏆" : `Your best is ${longestStreak} days — keep pushing!`}\n\nHere's your progress:`;
-            } else {
-                celebrationText += `A great session! **Log in** to start tracking your streaks and unlocking achievements.`;
+            // Detect achievements
+            // First workout achievement
+            if (completedWorkouts === 1) {
+                const badgeProps = await generateAchievementBadgeProps('first_workout', supabaseUserId);
+                if (badgeProps.unlocked) achievements.push({ type: 'first_workout', props: badgeProps });
             }
 
-            const celebrationMsg: Message = {
+            // Streak milestones
+            if (streakCount === 7) {
+                const badgeProps = await generateAchievementBadgeProps('streak_7', supabaseUserId);
+                if (badgeProps.unlocked) achievements.push({ type: 'streak_7', props: badgeProps });
+            } else if (streakCount === 14) {
+                const badgeProps = await generateAchievementBadgeProps('streak_14', supabaseUserId);
+                if (badgeProps.unlocked) achievements.push({ type: 'streak_14', props: badgeProps });
+            } else if (streakCount === 30) {
+                const badgeProps = await generateAchievementBadgeProps('streak_30', supabaseUserId);
+                if (badgeProps.unlocked) achievements.push({ type: 'streak_30', props: badgeProps });
+            }
+
+            // Workout count milestones
+            if (completedWorkouts === 10) {
+                const badgeProps = await generateAchievementBadgeProps('workouts_10', supabaseUserId);
+                if (badgeProps.unlocked) achievements.push({ type: 'workouts_10', props: badgeProps });
+            } else if (completedWorkouts === 25) {
+                const badgeProps = await generateAchievementBadgeProps('workouts_25', supabaseUserId);
+                if (badgeProps.unlocked) achievements.push({ type: 'workouts_25', props: badgeProps });
+            }
+
+            // Consistency achievement (5+ workouts in last week)
+            const weekWorkouts = recentWorkouts.filter(w => {
+                const workoutDate = new Date(w.created_at);
+                const daysAgo = Math.floor((Date.now() - workoutDate.getTime()) / (1000 * 60 * 60 * 24));
+                return daysAgo <= 7 && w.completed;
+            });
+            const uniqueDays = new Set(weekWorkouts.map(w =>
+                new Date(w.created_at).toISOString().split('T')[0]
+            )).size;
+
+            if (uniqueDays === 5) {
+                const badgeProps = await generateAchievementBadgeProps('consistency_week', supabaseUserId);
+                if (badgeProps.unlocked) achievements.push({ type: 'consistency_week', props: badgeProps });
+            }
+        }
+
+        // Build days array for StreakTimeline (Guest gets empty/default)
+        const days = Array.from({ length: NUMBERS.STREAK_TIMELINE_DAYS }, (_, i) => {
+            const date = new Date();
+            date.setDate(date.getDate() - (NUMBERS.STREAK_TIMELINE_DAYS - 1 - i));
+            const dateStr = date.toISOString().split('T')[0];
+            const hasWorkout = recentWorkouts.some(w =>
+                new Date(w.created_at).toISOString().split('T')[0] === dateStr && w.completed
+            );
+            return { date: dateStr, completed: hasWorkout };
+        });
+
+        const isMentalSession = ['mindfulness', 'sleep', 'stress', 'recovery'].includes(normalizeGoalType(data.workoutType || ''));
+
+        // Build celebration message
+        let celebrationText = '';
+
+        if (isMentalSession) {
+            celebrationText = `🌿 **Wonderful practice.** You've given yourself a moment of calm.\n\n`;
+        } else {
+            celebrationText = `🎉 **Amazing work!** You just crushed that ${data.workoutType} workout!\n\n`;
+        }
+
+        if (achievements.length > 0) celebrationText += `**Achievement Unlocked!** 🏆\n\n`;
+
+        if (supabaseUserId) {
+            celebrationText += `You've built a **${streakCount}-day streak** — every day you show up is another proof of your commitment. ${streakCount >= longestStreak ? "That's your best streak ever! 🏆" : `Your best is ${longestStreak} days — keep pushing!`}\n\nHere's your progress:`;
+        } else {
+            celebrationText += `A great session! **Log in** to start tracking your streaks and unlocking achievements.`;
+        }
+
+        const celebrationMsg: Message = {
+            id: uuidv4(),
+            role: MessageRole.MODEL,
+            text: celebrationText,
+            timestamp: Date.now(),
+            uiComponent: {
+                type: 'streakTimeline',
+                props: {
+                    habitName: isMentalSession ? 'Mindfulness' : 'Workout',
+                    currentStreak: streakCount,
+                    longestStreak: longestStreak,
+                    days: days
+                }
+            }
+        };
+
+        setMessages((prev: Message[]) => [...prev, celebrationMsg]);
+
+        if (isMentalSession) {
+            const reflectionMsg: Message = {
                 id: uuidv4(),
                 role: MessageRole.MODEL,
-                text: celebrationText,
-                timestamp: Date.now(),
-                uiComponent: {
-                    type: 'streakTimeline',
-                    props: {
-                        habitName: isMentalSession ? 'Mindfulness' : 'Workout',
-                        currentStreak: streakCount,
-                        longestStreak: longestStreak,
-                        days: days
+                text: `✨ Take a moment to notice how you feel right now. More grounded? Lighter? I'm here if you'd like to journal a thought or two.`,
+                timestamp: Date.now()
+            };
+            setTimeout(() => {
+                setMessages((prev: Message[]) => [...prev, reflectionMsg]);
+            }, 1500);
+        } else {
+            const cooldownDuration = 2; // minutes
+            const cooldownLabel = `Breathing Practice (${cooldownDuration} min)`;
+            const cooldownTimerProps = {
+                duration: cooldownDuration * 60,
+                label: cooldownLabel,
+                meta: {
+                    mindfulConfig: {
+                        intent: 'breathing_reset',
+                        totalMinutes: cooldownDuration,
+                        guidanceStyle: 'light',
+                        pattern: 'calming'
                     }
                 }
             };
 
-            setMessages((prev: Message[]) => [...prev, celebrationMsg]);
+            const cooldownMessage: Message = {
+                id: uuidv4(),
+                role: MessageRole.MODEL,
+                text: `✨ How about a quick ${cooldownDuration}-minute breathing cooldown to help your body and mind recover?`,
+                timestamp: Date.now(),
+                uiComponent: {
+                    type: 'timer',
+                    props: cooldownTimerProps
+                }
+            };
 
-            if (isMentalSession) {
-                const reflectionMsg: Message = {
+            setMessages((prev: Message[]) => [...prev, cooldownMessage]);
+        }
+
+        // ADDED: Proactively suggested Habit Heatmap / Badges for signed-in users only
+        if (supabaseUserId) {
+            // Add achievement badges if any unlocked
+            for (const achievement of achievements) {
+                const achievementMsg: Message = {
                     id: uuidv4(),
                     role: MessageRole.MODEL,
-                    text: `✨ Take a moment to notice how you feel right now. More grounded? Lighter? I'm here if you'd like to journal a thought or two.`,
-                    timestamp: Date.now()
-                };
-                setTimeout(() => {
-                    setMessages((prev: Message[]) => [...prev, reflectionMsg]);
-                }, 1500);
-            } else {
-                const cooldownDuration = 2; // minutes
-                const cooldownLabel = `Breathing Practice (${cooldownDuration} min)`;
-                const cooldownTimerProps = {
-                    duration: cooldownDuration * 60,
-                    label: cooldownLabel,
-                    meta: {
-                        mindfulConfig: {
-                            intent: 'breathing_reset',
-                            totalMinutes: cooldownDuration,
-                            guidanceStyle: 'light',
-                            pattern: 'calming'
-                        }
-                    }
-                };
-
-                const cooldownMessage: Message = {
-                    id: uuidv4(),
-                    role: MessageRole.MODEL,
-                    text: `✨ How about a quick ${cooldownDuration}-minute breathing cooldown to help your body and mind recover?`,
+                    text: `🏆 **Achievement Unlocked!**\n\n${achievement.props.title}${achievement.props.description ? `\n${achievement.props.description}` : ''}`,
                     timestamp: Date.now(),
                     uiComponent: {
-                        type: 'timer',
-                        props: cooldownTimerProps
+                        type: 'achievementBadge',
+                        props: achievement.props
                     }
                 };
-
-                setMessages((prev: Message[]) => [...prev, cooldownMessage]);
+                setMessages((prev: Message[]) => [...prev, achievementMsg]);
             }
 
-            // ADDED: Proactively suggested Habit Heatmap / Badges for signed-in users only
-            if (supabaseUserId) {
-                // Add achievement badges if any unlocked
-                for (const achievement of achievements) {
-                    const achievementMsg: Message = {
+            // Proactively show habit heatmap if user has been active for 2+ weeks
+            const completedWorkouts = recentWorkouts.filter(w => w.completed).length;
+            if (completedWorkouts >= 10) {
+                const heatmapProps = await generateHabitHeatmapProps('workout', supabaseUserId, 12);
+                if (heatmapProps.data.length > 0) {
+                    const heatmapMsg: Message = {
                         id: uuidv4(),
                         role: MessageRole.MODEL,
-                        text: `🏆 **Achievement Unlocked!**\n\n${achievement.props.title}${achievement.props.description ? `\n${achievement.props.description}` : ''}`,
+                        text: `Here's your activity pattern over the last 12 weeks. Consistency is key! 💪`,
                         timestamp: Date.now(),
                         uiComponent: {
-                            type: 'achievementBadge',
-                            props: achievement.props
+                            type: 'habitHeatmap',
+                            props: heatmapProps
                         }
                     };
-                    setMessages((prev: Message[]) => [...prev, achievementMsg]);
-                }
-
-                // Proactively show habit heatmap if user has been active for 2+ weeks
-                const completedWorkouts = recentWorkouts.filter(w => w.completed).length;
-                if (completedWorkouts >= 10) {
-                    const heatmapProps = await generateHabitHeatmapProps('workout', supabaseUserId, 12);
-                    if (heatmapProps.data.length > 0) {
-                        const heatmapMsg: Message = {
-                            id: uuidv4(),
-                            role: MessageRole.MODEL,
-                            text: `Here's your activity pattern over the last 12 weeks. Consistency is key! 💪`,
-                            timestamp: Date.now(),
-                            uiComponent: {
-                                type: 'habitHeatmap',
-                                props: heatmapProps
-                            }
-                        };
-                        setTimeout(() => {
-                            setMessages((prev: Message[]) => [...prev, heatmapMsg]);
-                        }, 2000);
-                    }
+                    setTimeout(() => {
+                        setMessages((prev: Message[]) => [...prev, heatmapMsg]);
+                    }, 2000);
                 }
             }
         }
+    }
+        };
     };
-};
 
 /**
  * Main action handler dispatcher

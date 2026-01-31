@@ -110,6 +110,11 @@ Health Data Source: ${context.fitnessStats.steps > 0 ? 'Connected' : 'Unavailabl
     // Add Detailed Important Context
     systemContext += formatImportantContext(context);
 
+    // Adherence: suggested next action (same as text chat) for proactive nudge
+    if (context.lifeContext?.suggestedNextAction) {
+        systemContext += `\n\n[SUGGESTED NEXT ACTION] ${context.lifeContext.suggestedNextAction}\nINSTRUCTION: Use for a short proactive nudge when relevant (e.g. no movement today, streak). Deliver value first; never block action with questions.`;
+    }
+
     return systemContext;
 }
 

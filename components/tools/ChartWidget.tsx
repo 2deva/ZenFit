@@ -10,16 +10,40 @@ interface ChartWidgetProps {
   dataKey?: string;
   chartType?: 'area' | 'bar' | 'line';
   color?: string;
+  emptyMessage?: string;
+  onEmptyCtaClick?: () => void;
 }
+
+const DEFAULT_EMPTY_MESSAGE = 'No sessions yet — your first one will show here';
 
 export const ChartWidget: React.FC<ChartWidgetProps> = ({
   data,
   title = "Progress",
   dataKey = "value",
   chartType = 'area',
-  color = "#E87A38"
+  color = "#E87A38",
+  emptyMessage = DEFAULT_EMPTY_MESSAGE,
+  onEmptyCtaClick
 }) => {
-  if (!data || data.length === 0) return null;
+  const isEmpty = !data || data.length === 0;
+
+  if (isEmpty) {
+    return (
+      <div className="bg-white/90 backdrop-blur-sm p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-sand-200 w-full max-w-md animate-slide-up-fade shadow-soft">
+        <h4 className="font-display text-xs sm:text-sm font-bold text-ink-500 mb-2 uppercase tracking-wider">{title}</h4>
+        <p className="text-sm text-ink-600 mb-4">{emptyMessage}</p>
+        {onEmptyCtaClick && (
+          <button
+            type="button"
+            onClick={onEmptyCtaClick}
+            className="text-sm font-semibold text-claude-500 hover:text-claude-600 transition-colors"
+          >
+            Do a workout
+          </button>
+        )}
+      </div>
+    );
+  }
 
   // Common props for charts
   const commonProps = {

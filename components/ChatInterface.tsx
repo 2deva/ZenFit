@@ -2,7 +2,7 @@
 import React from 'react';
 import { Message } from '../types';
 import { MessageBubble } from './MessageBubble';
-import { Sparkles, ArrowRight, MessageCircle, Dumbbell, Target, Brain, ChevronDown, Mic } from 'lucide-react';
+import { Sparkles, ArrowRight, MessageCircle, Dumbbell, Target, Brain, BarChart2, ChevronDown, Mic } from 'lucide-react';
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -323,25 +323,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                             </p>
                         </div>
 
-                        {/* Pill Buttons */}
+                        {/* Pill Buttons (Zen skills: action-first) */}
                         <div className="flex flex-wrap items-center justify-center gap-3 mb-6">
-                            <button
-                                onClick={() => handleStarterClick("I'm new here and want to build sustainable fitness habits. Help me set up my personalized wellness goals.")}
-                                className="group flex items-center gap-2 px-5 py-3 bg-white/90 backdrop-blur-sm rounded-full border border-sand-200 hover:border-claude-300 hover:shadow-soft-md transition-all duration-300"
-                                data-testid="starter-journey-button"
-                            >
-                                <Target className="w-4 h-4 text-claude-500" />
-                                <span className="font-medium text-sm text-ink-700">Start my journey</span>
-                                <ArrowRight className="w-3.5 h-3.5 text-ink-300 group-hover:text-claude-500 group-hover:translate-x-0.5 transition-all" />
-                            </button>
-
                             <button
                                 onClick={() => handleStarterClick("I want to do a workout with your voice guidance.", true)}
                                 className="group flex items-center gap-2 px-5 py-3 bg-white/90 backdrop-blur-sm rounded-full border border-sand-200 hover:border-claude-300 hover:shadow-soft-md transition-all duration-300"
                                 data-testid="starter-workout-button"
                             >
                                 <Dumbbell className="w-4 h-4 text-claude-500" />
-                                <span className="font-medium text-sm text-ink-700">Plan a workout</span>
+                                <span className="font-medium text-sm text-ink-700">Do a workout</span>
                                 <ArrowRight className="w-3.5 h-3.5 text-ink-300 group-hover:text-claude-500 group-hover:translate-x-0.5 transition-all" />
                             </button>
 
@@ -351,12 +341,20 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                                 data-testid="starter-mindfulness-button"
                             >
                                 <Brain className="w-4 h-4 text-claude-500" />
-                                <span className="font-medium text-sm text-ink-700">Mindfulness</span>
+                                <span className="font-medium text-sm text-ink-700">Breathing</span>
                                 <ArrowRight className="w-3.5 h-3.5 text-ink-300 group-hover:text-claude-500 group-hover:translate-x-0.5 transition-all" />
                             </button>
-                        </div>
 
-                        <div className="flex flex-wrap items-center justify-center gap-3">
+                            <button
+                                onClick={() => handleStarterClick("Show my progress this week.")}
+                                className="group flex items-center gap-2 px-5 py-3 bg-white/90 backdrop-blur-sm rounded-full border border-sand-200 hover:border-claude-300 hover:shadow-soft-md transition-all duration-300"
+                                data-testid="starter-progress-button"
+                            >
+                                <BarChart2 className="w-4 h-4 text-claude-500" />
+                                <span className="font-medium text-sm text-ink-700">My progress</span>
+                                <ArrowRight className="w-3.5 h-3.5 text-ink-300 group-hover:text-claude-500 group-hover:translate-x-0.5 transition-all" />
+                            </button>
+
                             <button
                                 onClick={() => handleStarterClick("Hey Zen! Let's just chat.")}
                                 className="group flex items-center gap-2 px-5 py-3 bg-white/90 backdrop-blur-sm rounded-full border border-sand-200 hover:border-claude-300 hover:shadow-soft-md transition-all duration-300"

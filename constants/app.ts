@@ -52,6 +52,9 @@ export const ACTIONS = {
     // Goal actions
     SAVE_GOALS: 'saveGoals',
 
+    // Chat actions (e.g. from empty-state CTA)
+    ADD_MESSAGE: 'addMessage',
+
     // Workout actions
     GENERATE_WORKOUT: 'generateWorkout',
     WORKOUT_PROGRESS_CHANGE: 'workoutProgressChange',

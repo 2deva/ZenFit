@@ -16,6 +16,7 @@ interface TimerProps {
   // Controlled state (for syncing with guidance)
   controlledIsRunning?: boolean;
   controlledTimeLeft?: number;
+  controlledIsCompleted?: boolean;
 
   // Live Mode Integration
   isLiveMode?: boolean;
@@ -37,6 +38,7 @@ export const Timer: React.FC<TimerProps> = ({
   goalIds,
   controlledIsRunning,
   controlledTimeLeft,
+  controlledIsCompleted,
   isLiveMode = false,
   audioDataRef,
   aiState = 'idle',
@@ -52,13 +54,10 @@ export const Timer: React.FC<TimerProps> = ({
   const isActive = controlledIsRunning ?? false;
   const [isCompleted, setIsCompleted] = useState(false);
   const [isGuidanceExpanded, setIsGuidanceExpanded] = useState(true);
-  const hasFiredOnCompleteRef = useRef(false);
 
   // Store callbacks in refs to avoid triggering useEffect on every render
   const onStateChangeRef = useRef(onStateChange);
   onStateChangeRef.current = onStateChange;
-  const onCompleteRef = useRef(onComplete);
-  onCompleteRef.current = onComplete;
 
   // Responsive size
   const size = 120;
@@ -145,22 +144,34 @@ export const Timer: React.FC<TimerProps> = ({
       : undefined;
 
   // Keep completion flag in sync with controlled time.
-  useEffect(() => {
-    if (controlledTimeLeft !== undefined) {
-      if (controlledTimeLeft <= 0) {
-        setIsCompleted(true);
-      } else if (isCompleted) {
-        // Reset completion if upstream time moves back above zero (e.g., reset).
-        setIsCompleted(false);
-        hasFiredOnCompleteRef.current = false;
-      }
-    }
-  }, [controlledTimeLeft, isCompleted]);
+  const isRemoteComplete = controlledIsCompleted ||
+    (controlledTimeLeft !== undefined && controlledTimeLeft <= 0) ||
+    (owningSession?.state === 'completed');
 
-  // Call onComplete when timer finishes (fire once per completion)
+  const shouldShowComplete = isCompleted || isRemoteComplete;
+
+  useEffect(() => {
+    if (isRemoteComplete) {
+      setIsCompleted(true);
+    } else if (isCompleted && controlledTimeLeft !== undefined && controlledTimeLeft > 0) {
+      // Only reset if explicitly updated to a positive time (e.g. reset/restart)
+      setIsCompleted(false);
+      // NOTE: We do NOT reset hasFiredOnCompleteRef here if we want 1-time-only completion per bubble.
+      // If user wants to "re-complete" to trigger another celebration, we'd uncomment this.
+      // But user requested "completion message should appear only once".
+    }
+  }, [isRemoteComplete, isCompleted, controlledTimeLeft]);
+
+  // Track completion firing - Initialize to true if already complete on mount (prevents refresh spam)
+  const hasFiredOnCompleteRef = useRef(shouldShowComplete);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
+
+  // Call onComplete when timer finishes (fire once per lifecycle)
   useEffect(() => {
     const remaining = controlledTimeLeft ?? timeLeftDisplay;
-    if ((isCompleted || remaining <= 0) && onCompleteRef.current && !hasFiredOnCompleteRef.current) {
+    // Trigger if visually complete OR strictly out of time
+    if ((shouldShowComplete || remaining <= 0) && onCompleteRef.current && !hasFiredOnCompleteRef.current) {
       hasFiredOnCompleteRef.current = true;
       onCompleteRef.current({
         label,
@@ -169,10 +180,10 @@ export const Timer: React.FC<TimerProps> = ({
         goalIds
       });
     }
-  }, [isCompleted, controlledTimeLeft, timeLeftDisplay, label, durationSeconds, goalType, goalIds]);
+  }, [shouldShowComplete, controlledTimeLeft, timeLeftDisplay, label, durationSeconds, goalType, goalIds]);
 
   const toggle = () => {
-    if (isCompleted) {
+    if (shouldShowComplete) {
       reset();
     } else {
       const nextIsRunning = !isActive;
@@ -198,7 +209,7 @@ export const Timer: React.FC<TimerProps> = ({
 
   const reset = () => {
     setIsCompleted(false);
-    hasFiredOnCompleteRef.current = false;
+    // Don't reset hasFiredOnCompleteRef to prevent duplicate celebration messages
 
     if (isLiveMode) {
       // In Live Mode, treat reset as an explicit stop so LiveSessionContext
@@ -246,7 +257,7 @@ export const Timer: React.FC<TimerProps> = ({
 
   // Mindful vs generic presentations
   const renderMindfulSubtitle = () => {
-    if (isCompleted) {
+    if (shouldShowComplete) {
       return "Take a moment to notice how you feel.";
     }
     if (!mindfulPhaseSnapshot) {
@@ -269,14 +280,14 @@ export const Timer: React.FC<TimerProps> = ({
   };
 
   const primaryButtonLabel = isMindfulSession
-    ? (isCompleted ? "End session" : undefined)
-    : (isCompleted ? "Done" : undefined);
+    ? (shouldShowComplete ? "End session" : undefined)
+    : (shouldShowComplete ? "Done" : undefined);
 
   return (
     <div className="bg-white/90 backdrop-blur-sm p-4 sm:p-6 rounded-3xl sm:rounded-4xl shadow-soft-lg flex flex-col gap-4 sm:gap-6 w-full max-w-md mx-auto animate-slide-up-fade border border-sand-200 relative overflow-hidden">
 
       {/* Live Mode Indicator - Shows when timer is active and Live Mode is on */}
-      {isLiveMode && isActive && !isCompleted && (
+      {isLiveMode && isActive && !shouldShowComplete && (
         <LiveModeIndicator aiState={aiState} />
       )}
 
@@ -286,7 +297,7 @@ export const Timer: React.FC<TimerProps> = ({
           <div className="absolute top-1/2 left-1/2 sm:left-24 w-32 sm:w-40 h-32 sm:h-40 bg-gradient-radial from-claude-200/30 to-transparent rounded-full blur-3xl -translate-y-1/2 -translate-x-1/2 animate-breathe pointer-events-none"></div>
         )}
 
-        {isCompleted && (
+        {shouldShowComplete && (
           <div className="absolute top-1/2 left-1/2 sm:left-24 w-32 sm:w-40 h-32 sm:h-40 bg-gradient-radial from-emerald-200/40 to-transparent rounded-full blur-3xl -translate-y-1/2 -translate-x-1/2 animate-glow-pulse pointer-events-none"></div>
         )}
 
@@ -294,7 +305,7 @@ export const Timer: React.FC<TimerProps> = ({
           <svg className="w-full h-full transform -rotate-90">
             <circle stroke="#F3EDE7" strokeWidth={strokeWidth} fill="transparent" r={radius} cx={center} cy={center} />
             <circle
-              stroke={isCompleted ? "url(#gradientCompleteClaude)" : "url(#gradientProgressClaude)"}
+              stroke={shouldShowComplete ? "url(#gradientCompleteClaude)" : "url(#gradientProgressClaude)"}
               strokeWidth={strokeWidth}
               strokeDasharray={circumference + ' ' + circumference}
               style={{ strokeDashoffset: dashoffset }}
@@ -318,7 +329,7 @@ export const Timer: React.FC<TimerProps> = ({
           </svg>
 
           <div className="absolute inset-0 flex flex-col items-center justify-center">
-            {isCompleted ? (
+            {shouldShowComplete ? (
               <CheckCircle2 className="w-10 h-10 sm:w-12 sm:h-12 text-green-500 animate-in zoom-in" />
             ) : (
               <>
@@ -338,20 +349,20 @@ export const Timer: React.FC<TimerProps> = ({
             <div className="flex items-center gap-2 mb-1">
               <TimerIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-claude-500" />
               <h4 className="font-display font-bold text-ink-800 text-base sm:text-lg">
-                {isCompleted ? "Complete!" : label}
+                {shouldShowComplete ? "Complete!" : label}
               </h4>
             </div>
             <p className="text-xs sm:text-sm text-ink-400 font-body">
               {isMindfulSession
                 ? renderMindfulSubtitle()
-                : isCompleted
+                : shouldShowComplete
                   ? "Excellent work!"
                   : (isActive ? "Stay focused!" : "Ready when you are")}
             </p>
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            {!isCompleted ? (
+            {!shouldShowComplete ? (
               <Button
                 variant="primary"
                 size="icon"
@@ -369,16 +380,14 @@ export const Timer: React.FC<TimerProps> = ({
               </Button>
             )}
 
-            {!isCompleted && (
-              <Button
-                variant="secondary"
-                size="icon"
-                onClick={reset}
-                className="h-11 w-11 sm:h-14 sm:w-14 rounded-xl sm:rounded-2xl"
-              >
-                <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5" />
-              </Button>
-            )}
+            <Button
+              variant="secondary"
+              size="icon"
+              onClick={reset}
+              className="h-11 w-11 sm:h-14 sm:w-14 rounded-xl sm:rounded-2xl"
+            >
+              <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5" />
+            </Button>
           </div>
         </div>
       </div>

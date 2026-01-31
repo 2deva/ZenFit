@@ -108,6 +108,7 @@ export const renderUIFunction: FunctionDeclaration = {
           // Chart Props
           chartTitle: { type: Type.STRING },
           dataKey: { type: Type.STRING },
+          emptyMessage: { type: Type.STRING, description: 'Shown when data is empty (e.g. "No sessions yet — your first one will show here")' },
           data: {
             type: Type.ARRAY,
             items: {
@@ -375,9 +376,9 @@ export const validateUIComponent = (type: string, props: any): boolean => {
       }
       return true;
     case 'chart':
-      // Must have data points
-      if (!Array.isArray(props.data) || props.data.length === 0) {
-        console.warn(`GeminiService: chart validation failed - no data array or empty`);
+      // Allow empty data for empty state (ChartWidget shows emptyMessage)
+      if (!Array.isArray(props.data)) {
+        console.warn(`GeminiService: chart validation failed - data must be an array`);
         return false;
       }
       return true;
@@ -489,10 +490,9 @@ INSTRUCTION: Subtly encourage sign-in for personalization and progress tracking 
             systemContext += `\n- ${w.type || 'Workout'} (${w.daysAgo === 0 ? 'Today' : `${w.daysAgo} days ago`}): ${status}`;
           });
           systemContext += `\nTotal Completed: ${completedCount} workouts`;
-          // Suggest progress visualization if user has been active
-          if (completedCount >= 3) {
-            systemContext += `\nPROGRESS VISUALIZATION: User has ${completedCount} recent workouts - consider showing habitHeatmap (12 weeks) or chart (7 days) when they ask about progress.`;
-          }
+          systemContext += `\nPROGRESS VISUALIZATION: When user asks about progress ("show my progress", "how am I doing", "progress this week"), always call renderUI with type 'chart' (and optionally streakTimeline/habitHeatmap). If ${completedCount >= 1 ? 'they have data' : 'they have no sessions'}, use chart with real data or with data: [] and emptyMessage: "No sessions yet — your first one will show here".`;
+        } else {
+          systemContext += `\n\nPROGRESS VISUALIZATION: When user asks about progress ("show my progress", "how am I doing", "progress this week"), always call renderUI with type 'chart', data: [], emptyMessage: "No sessions yet — your first one will show here".`;
         }
 
         if (mc.relevantMemories.length > 0) {
@@ -550,6 +550,9 @@ INSTRUCTION: Subtly encourage sign-in for personalization and progress tracking 
             systemContext += `\nRisk patterns: ${lc.psychology.riskPatterns.join(', ')}.`;
           }
           systemContext += `\nTone guardrails: ${lc.psychology.toneGuardrails}`;
+        }
+        if (lc.suggestedNextAction) {
+          systemContext += `\nSuggested next action (use for proactive nudge when appropriate): ${lc.suggestedNextAction}`;
         }
       }
 
