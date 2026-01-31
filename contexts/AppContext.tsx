@@ -130,6 +130,7 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
     const [lastMessageTime, setLastMessageTime] = useState<number>(Date.now());
     const [dashboardSnapshot, setDashboardSnapshot] = useState<DashboardSnapshot | null>(null);
     const dashboardSnapshotRef = useRef<DashboardSnapshot | null>(null);
+    const timerActivityIdsRef = useRef(new Map<string, string>());
     const [lifeContext, setLifeContext] = useState<LifeContext | null>(null);
 
     // --- UI State ---
@@ -391,8 +392,9 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
         pauseActivity,
         resumeActivity,
         completeActivity,
-        stopActivity
-    });
+        stopActivity,
+        activitySessions
+    }, timerActivityIdsRef.current);
 
     const handleActionWrapper = async (action: string, data: any) => {
         // Live mode specific logic will be injected or handled via a check in LiveSessionContext

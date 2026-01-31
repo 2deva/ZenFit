@@ -41,12 +41,13 @@ interface ActionHandlersOptions {
     resumeActivity?: (activityId: string) => void;
     completeActivity?: (activityId: string) => void;
     stopActivity?: (activityId: string) => void;
+    activitySessions?: Record<string, ActivitySession>;
 }
 
 /**
  * Creates action handlers for UI component interactions
  */
-export const createActionHandlers = (options: ActionHandlersOptions) => {
+export const createActionHandlers = (options: ActionHandlersOptions, timerActivityIds: Map<string, string>) => {
     const {
         userProfile,
         setUserProfile,
@@ -71,9 +72,20 @@ export const createActionHandlers = (options: ActionHandlersOptions) => {
     const completeActivity = completeActivityRaw ?? (() => { /* noop */ });
     const stopActivity = stopActivityRaw ?? (() => { /* noop */ });
 
-    // Map timer labels to ActivityEngine ids so we can translate UI-level
-    // TIMER_STATE_CHANGE events into ActivityEngine commands.
-    const timerActivityIds = new Map<string, string>();
+    // Helper to resolve activity ID from label, checking persistence if needed
+    const getActivityId = (label: string): string | undefined => {
+        let id = timerActivityIds.get(label);
+        if (!id && options.activitySessions) {
+            const found = Object.values(options.activitySessions).find(
+                s => s.label === label && s.state !== 'stopped' && s.state !== 'completed'
+            );
+            if (found) {
+                id = found.id;
+                timerActivityIds.set(label, id);
+            }
+        }
+        return id;
+    };
 
     return {
         [ACTIONS.SAVE_GOALS]: async (data: string[]) => {
@@ -165,7 +177,7 @@ export const createActionHandlers = (options: ActionHandlersOptions) => {
             const mindfulConfig = meta.mindfulConfig;
             const phases = meta.phases;
 
-            const maybeId = timerActivityIds.get(label);
+            const maybeId = getActivityId(label);
 
             // Interpret state transitions as semantic commands for ActivityEngine:
             // - isRunning === true  → start or resume activity
@@ -209,7 +221,7 @@ export const createActionHandlers = (options: ActionHandlersOptions) => {
         [ACTIONS.TIMER_COMPLETE]: async (data: any) => {
             // Ensure the corresponding ActivityEngine session is marked complete
             if (data.label && typeof data.label === 'string') {
-                const maybeId = timerActivityIds.get(data.label);
+                const maybeId = getActivityId(data.label);
                 if (maybeId) {
                     try {
                         completeActivity(maybeId);
