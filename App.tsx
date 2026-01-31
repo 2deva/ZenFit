@@ -1,4 +1,5 @@
 import React from 'react';
+import { Analytics } from '@vercel/analytics/react';
 import { AppContextProvider } from './contexts/AppContext';
 import { LiveSessionContextProvider } from './contexts/LiveSessionContext';
 import { GlobalEffects } from './components/GlobalEffects';
@@ -10,6 +11,7 @@ function App() {
             <LiveSessionContextProvider>
                 <GlobalEffects />
                 <AppLayout />
+                <Analytics />
             </LiveSessionContextProvider>
         </AppContextProvider>
     );
