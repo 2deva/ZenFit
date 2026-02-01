@@ -1,12 +1,9 @@
 // Embedding Service for Semantic Memory (Tier 3)
 // Uses Gemini text-embedding-004 for generating embeddings
 
-import { GoogleGenAI } from "@google/genai";
-import { API_KEY } from "../constants";
-import { supabase } from "../supabaseConfig";
 import { storeMemory, searchMemories } from "./supabaseService";
-
-const ai = new GoogleGenAI({ apiKey: API_KEY });
+import { supabase } from "../supabaseConfig";
+import { ai } from "./opikGemini";
 const EMBEDDING_MODEL = "text-embedding-004";
 
 /**

@@ -5,7 +5,7 @@ import { useMessages } from '../hooks/useMessages';
 import { useActivityState, ActivitySession, ActivityTimer, ActivityEvent, ActivityIntent, ActivityPhase } from '../hooks/useActivityState';
 import { extractOnboardingContext, recordInteraction, getOnboardingState, deleteAllMessages, OnboardingState } from '../services/supabaseService';
 import { getFullUserContext, UserMemoryContext, buildLifeContext } from '../services/userContextService';
-import { sendMessageToGemini } from '../services/geminiService';
+import { sendMessageToGemini, buildSystemInstruction } from '../services/geminiService';
 import { extractAndStoreSummary } from '../services/embeddingService';
 import { createCalendarEvent } from '../services/calendarService';
 import { createActionHandlers, handleAction } from '../handlers/actionHandlers';
@@ -316,7 +316,26 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
             context.memoryContext = enrichedMemoryContext;
         }
 
-        const response = await sendMessageToGemini(messages.concat(userMsg), userMsg.text, context);
+        let response: { text?: string; uiComponent?: UIComponentData; groundingChunks?: unknown[]; functionCalls?: { name: string; args: unknown }[] };
+        try {
+            const systemInstruction = await buildSystemInstruction(context);
+            const apiRes = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    messages: messages.concat(userMsg).map(m => ({ role: m.role, text: m.text })),
+                    newMessage: userMsg.text,
+                    systemInstruction,
+                }),
+            });
+            if (apiRes.ok) {
+                response = await apiRes.json();
+            } else {
+                response = await sendMessageToGemini(messages.concat(userMsg), userMsg.text, context);
+            }
+        } catch {
+            response = await sendMessageToGemini(messages.concat(userMsg), userMsg.text, context);
+        }
 
         // Normalize timer duration so "1 min" requests don't show 5:00 (model sometimes sends 300 or omits)
         let uiComponent = response.uiComponent;
@@ -327,7 +346,7 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
         const modelMsg: Message = {
             id: uuidv4(),
             role: MessageRole.MODEL,
-            text: response.text,
+            text: response.text ?? '',
             timestamp: Date.now(),
             uiComponent,
             groundingChunks: response.groundingChunks
@@ -336,7 +355,7 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
         if (response.functionCalls) {
             for (const call of response.functionCalls) {
                 if (call.name === 'createCalendarEvent') {
-                    await createCalendarEvent(call.args);
+                    await createCalendarEvent(call.args as Parameters<typeof createCalendarEvent>[0]);
                     modelMsg.text += TEXT.CALENDAR_EVENT_CONFIRMATION;
                 }
             }

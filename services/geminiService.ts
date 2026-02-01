@@ -1,10 +1,9 @@
 
-import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
-import { API_KEY, MODEL_CHAT, MODEL_FAST, SYSTEM_INSTRUCTION } from "../constants";
+import { Type, FunctionDeclaration } from "@google/genai";
+import { MODEL_CHAT, MODEL_FAST, SYSTEM_INSTRUCTION } from "../constants";
 import { Message, MessageRole, UIComponentData, UserProfile, FitnessStats, LifeContext } from "../types";
 import { getSupportedExerciseNames } from "./exerciseGifService";
-
-const ai = new GoogleGenAI({ apiKey: API_KEY });
+import { ai } from "./opikGemini";
 
 export const renderUIFunction: FunctionDeclaration = {
   name: 'renderUI',
@@ -423,329 +422,177 @@ const classifyUserIntent = async (text: string): Promise<'SEARCH' | 'APP'> => {
   }
 };
 
-export const sendMessageToGemini = async (history: Message[], text: string, context?: UserContext): Promise<Partial<Message>> => {
-  try {
-    // Inject context into the system instruction or as a preamble
-    let systemContext = SYSTEM_INSTRUCTION;
-    if (context) {
-      systemContext += `\n\n=== CURRENT CONTEXT ===\nDate: ${context.date}\nTime: ${context.time}`;
-      if (context.timezone) {
-        systemContext += `\nTimezone: ${context.timezone} (UTC Offset: ${context.timezoneOffset} min)`;
-      }
-
-      if (context.location) {
-        systemContext += `\nUser Location Lat/Lng: ${context.location.lat}, ${context.location.lng}`;
-      }
-
-      if (context.fitnessStats) {
-        systemContext += `\n\n[REAL-TIME FITNESS DATA DETECTED]
+/**
+ * Build system instruction string from context. Exported so client can send it to /api/chat for Opik tracing.
+ */
+export async function buildSystemInstruction(context?: UserContext): Promise<string> {
+  let systemContext = SYSTEM_INSTRUCTION;
+  if (context) {
+    systemContext += `\n\n=== CURRENT CONTEXT ===\nDate: ${context.date}\nTime: ${context.time}`;
+    if (context.timezone) {
+      systemContext += `\nTimezone: ${context.timezone} (UTC Offset: ${context.timezoneOffset} min)`;
+    }
+    if (context.location) {
+      systemContext += `\nUser Location Lat/Lng: ${context.location.lat}, ${context.location.lng}`;
+    }
+    if (context.fitnessStats) {
+      systemContext += `\n\n[REAL-TIME FITNESS DATA DETECTED]
 Steps Today: ${context.fitnessStats.steps} / ${context.fitnessStats.stepsGoal}
 Calories Burned: ${context.fitnessStats.calories}
 Active Minutes: ${context.fitnessStats.activeMinutes}
 Health Data Source: ${context.fitnessStats.steps > 0 ? 'Connected' : 'Unavailable'}
 INSTRUCTION: Use this data to populate the 'dashboard' component if asked.`;
-      }
-
-      // Auth context
-      if (context.isAuthenticated && context.userName) {
-        systemContext += `\n\n[USER IDENTITY]
-User Name: ${context.userName}
-Status: Authenticated
-INSTRUCTION: Address user by name when appropriate. They have cross-session memory enabled.`;
-      } else {
-        systemContext += `\n\n[USER IDENTITY]
-Status: Guest (Not signed in)
-INSTRUCTION: Subtly encourage sign-in for personalization and progress tracking when relevant.`;
-      }
-
-      // Memory context from Supabase (Tier 2 & 3)
-      if (context.memoryContext) {
-        const mc = context.memoryContext;
-
-        if (mc.goals.length > 0) {
-          systemContext += `\n\n[LONG-TERM MEMORY: GOALS]`;
-          mc.goals.forEach(g => {
-            systemContext += `\n- ${g.label}${g.motivation ? ` (Why: "${g.motivation}")` : ''}`;
-          });
-        }
-
-        if (mc.streaks.length > 0) {
-          systemContext += `\n\n[LONG-TERM MEMORY: STREAKS]`;
-          mc.streaks.forEach(s => {
-            systemContext += `\n- ${s.habitType}: ${s.currentStreak} days current (Best: ${s.longestStreak} days)`;
-            // Highlight milestone streaks for proactive visualization
-            if (s.currentStreak === 7 || s.currentStreak === 14 || s.currentStreak === 30) {
-              systemContext += ` ⭐ MILESTONE - Consider showing achievementBadge!`;
-            }
-          });
-          systemContext += `\nINSTRUCTION: Celebrate streaks! Show streakTimeline after workouts. If streak is 0 or broken, gently encourage restart.`;
-          systemContext += `\nTOOL USAGE: When user asks about progress or after workout completion, use streakTimeline with habitName="${mc.streaks[0].habitType}", currentStreak=${mc.streaks[0].currentStreak}, longestStreak=${mc.streaks[0].longestStreak}`;
-        }
-
-        if (mc.recentWorkouts.length > 0) {
-          systemContext += `\n\n[RECENT ACTIVITY]`;
-          const completedCount = mc.recentWorkouts.filter(w => w.completed).length;
-          mc.recentWorkouts.forEach(w => {
-            const status = w.completed ? '✓ Completed' : '✗ Incomplete';
-            systemContext += `\n- ${w.type || 'Workout'} (${w.daysAgo === 0 ? 'Today' : `${w.daysAgo} days ago`}): ${status}`;
-          });
-          systemContext += `\nTotal Completed: ${completedCount} workouts`;
-          systemContext += `\nPROGRESS VISUALIZATION: When user asks about progress ("show my progress", "how am I doing", "progress this week"), always call renderUI with type 'chart' (and optionally streakTimeline/habitHeatmap). If ${completedCount >= 1 ? 'they have data' : 'they have no sessions'}, use chart with real data or with data: [] and emptyMessage: "No sessions yet — your first one will show here".`;
-        } else {
-          systemContext += `\n\nPROGRESS VISUALIZATION: When user asks about progress ("show my progress", "how am I doing", "progress this week"), always call renderUI with type 'chart', data: [], emptyMessage: "No sessions yet — your first one will show here".`;
-        }
-
-        if (mc.relevantMemories.length > 0) {
-          systemContext += `\n\n[SEMANTIC MEMORY: PAST CONTEXT]`;
-          mc.relevantMemories.forEach(m => {
-            systemContext += `\n- "${m}"`;
-          });
-          systemContext += `\nINSTRUCTION: Use these past insights to personalize your response.`;
-        }
-
-        if (mc.upcomingEvents.length > 0) {
-          systemContext += `\n\n[SCHEDULED EVENTS]`;
-          mc.upcomingEvents.forEach(e => {
-            const eventTime = new Date(e.scheduledAt).toLocaleString();
-            systemContext += `\n- ${e.title} at ${eventTime}`;
-          });
-        }
-      }
-
-      // LifeContext summary (schedule + goals + movement + psychology)
-      if (context.lifeContext) {
-        const lc = context.lifeContext;
-        systemContext += `\n\n[LIFE CONTEXT SUMMARY]`;
-
-        if (lc.profile.occupation || lc.profile.environment) {
-          systemContext += `\nOccupation: ${lc.profile.occupation || 'unknown'}; Environment: ${lc.profile.environment || 'unspecified'}.`;
-        }
-
-        if (lc.goals && lc.goals.length > 0) {
-          const topGoals = lc.goals.slice(0, 3);
-          systemContext += `\nGoals (top ${topGoals.length}):`;
-          topGoals.forEach((g, idx) => {
-            const streak = g.currentStreak ?? 0;
-            const best = g.bestStreak ?? streak;
-            const perWeek = g.targetPerWeek ?? '?';
-            const doneWeek = g.completionsThisWeek ?? 0;
-            systemContext += `\n  ${idx + 1}) ${g.label} – ${g.type}. Streak: ${streak} days (best ${best}). This week: ${doneWeek}/${perWeek}.`;
-          });
-        }
-
-        if (lc.movementBaseline?.patternSummary) {
-          systemContext += `\nMovement baseline: ${lc.movementBaseline.patternSummary}`;
-        }
-
-        if (lc.schedule?.preferredTrainingWindows?.length > 0) {
-          const labels = lc.schedule.preferredTrainingWindows.map(w => w.label).join(', ');
-          systemContext += `\nPreferred training windows (coarse): ${labels}.`;
-        } else {
-          systemContext += `\nPreferred training windows: not known; ask the user briefly when they prefer to move.`;
-        }
-
-        if (lc.psychology) {
-          systemContext += `\nPrimary \"why\": ${lc.psychology.primaryWhy}.`;
-          if (lc.psychology.riskPatterns.length > 0) {
-            systemContext += `\nRisk patterns: ${lc.psychology.riskPatterns.join(', ')}.`;
-          }
-          systemContext += `\nTone guardrails: ${lc.psychology.toneGuardrails}`;
-        }
-        if (lc.suggestedNextAction) {
-          systemContext += `\nSuggested next action (use for proactive nudge when appropriate): ${lc.suggestedNextAction}`;
-        }
-      }
-
-      // Psychology-first onboarding state injection
-      if (context.onboardingState) {
-        const os = context.onboardingState;
-        systemContext += `\n\n[ONBOARDING STATE - PSYCHOLOGY-FIRST]`;
-        systemContext += `\nStage: ${os.stage}`;
-        systemContext += `\nProfile Completeness: ${os.profileCompleteness}%`;
-        systemContext += `\nPsychological State: ${os.psychologicalState}`;
-        systemContext += `\nCan Ask Question Now: ${os.canAskQuestion ? 'YES' : 'NO (respect pacing)'}`;
-        systemContext += `\nTotal Interactions: ${os.totalInteractions}`;
-
-        if (os.primaryMotivation) {
-          systemContext += `\nPrimary Motivation: ${os.primaryMotivation}`;
-        }
-        if (os.healthConditions.length > 0) {
-          systemContext += `\nHealth Conditions: ${os.healthConditions.join(', ')}`;
-        }
-        if (os.preferredWorkoutTime) {
-          systemContext += `\nPreferred Workout Time: ${os.preferredWorkoutTime}`;
-        }
-
-        systemContext += `\n\nINSTRUCTION: Follow PSYCHOLOGY-FIRST ONBOARDING protocols based on the psychologicalState above.`;
-
-        if (os.psychologicalState === 'stressed') {
-          systemContext += `\nCRITICAL: User is stressed - offer support ONLY, NO questions!`;
-        } else if (os.psychologicalState === 'action_oriented') {
-          systemContext += `\nUser is action-oriented - deliver value first, questions only during breaks.`;
-        } else if (os.psychologicalState === 'hesitant' && os.totalInteractions < 5) {
-          systemContext += `\nUser is hesitant with low interactions - build trust through value, ask nothing yet.`;
-        } else if (os.psychologicalState === 'high_engagement' && os.canAskQuestion) {
-          systemContext += `\nUser is highly engaged - safe to ask contextual questions.`;
-        }
-      } else {
-        // Fallback for users without onboarding state yet
-        if (context.profile && context.profile.goals.length > 0) {
-          systemContext += `\n\nUSER STATE: Has defined goals - ${context.profile.goals.join(', ')}`;
-        } else {
-          systemContext += `\n\nUSER STATE: New user - use action-parallel approach, deliver value first.`;
-        }
-      }
     }
-
-    // Inject Available Exercise Database (Menu-based generation)
-    // This allows Gemini to know exactly what exercises we have visuals for.
-    try {
-      const availableExercises = await getSupportedExerciseNames();
-      if (availableExercises.length > 0) {
-        // Join with a separator that is token-efficient but readable
-        const exerciseList = availableExercises.join(', ');
-        systemContext += `\n\n[AVAILABLE EXERCISE DATABASE]
-The following is the COMPLETE LIST of supported physical exercises.
-When generating a workout with physical exercises, you MUST strictly choose names from this list to ensure we can show a demonstration GIF.
-If the user asks for an exercise not on this list, map it to the closest match from this list.
-
-${exerciseList}
-
-INSTRUCTION: Use ONLY these names for physical exercises in 'workoutList' or 'startGuidedActivity'.`;
-      }
-    } catch (e) {
-      console.warn("Failed to inject exercise database", e);
-    }
-
-    // Convert internal message format to Gemini API format
-    const contents = history.map(msg => ({
-      role: msg.role === MessageRole.USER ? 'user' : 'model',
-      parts: [{ text: msg.text }]
-    }));
-
-    // Add the new user message
-    contents.push({
-      role: 'user',
-      parts: [{ text: text }]
-    });
-
-
-    // Dynamic Tool Switching Logic (Smart Switch)
-    // Gemini 2.5 Flash currently crashes if both Function Calling and Google Search are enabled.
-    // We sniff the user's intent to decide which tool to enable.
-
-    const searchKeywords = ['search', 'google', 'find', 'online', 'latest', 'research', 'news', 'lookup'];
-    const lowerText = text.toLowerCase();
-    const isResearchMode = searchKeywords.some(kw => lowerText.includes(kw));
-
-    let activeTools: any[] = [];
-
-    if (isResearchMode) {
-      // Enable Google Search ONLY
-      activeTools = [{ googleSearch: {} }];
-      // console.log("GeminiService: Research Mode Activated (UI Tools Disabled)");
+    if (context.isAuthenticated && context.userName) {
+      systemContext += `\n\n[USER IDENTITY]\nUser Name: ${context.userName}\nStatus: Authenticated\nINSTRUCTION: Address user by name when appropriate. They have cross-session memory enabled.`;
     } else {
-      // Enable UI Tools + Calendar Tools (Default)
-      activeTools = [{ functionDeclarations: [renderUIFunction, calendarFunction, getEventsFunction] }];
+      systemContext += `\n\n[USER IDENTITY]\nStatus: Guest (Not signed in)\nINSTRUCTION: Subtly encourage sign-in for personalization and progress tracking when relevant.`;
     }
-
-    const response = await ai.models.generateContent({
-      model: MODEL_CHAT,
-      contents: contents,
-      config: {
-        systemInstruction: systemContext,
-        // thinkingConfig: { thinkingBudget: 0 }, // Conflict: Thinking Mode is currently incompatible with Tools (renderUI)
-        tools: activeTools,
+    if (context.memoryContext) {
+      const mc = context.memoryContext;
+      if (mc.goals.length > 0) {
+        systemContext += `\n\n[LONG-TERM MEMORY: GOALS]`;
+        mc.goals.forEach(g => { systemContext += `\n- ${g.label}${g.motivation ? ` (Why: "${g.motivation}")` : ''}`; });
       }
-    });
-
-    const candidate = response.candidates?.[0];
-    const modelParts = candidate?.content?.parts || [];
-
-    let responseText = "";
-    const functionCalls: { name: string; args: any }[] = [];
-    let uiComponent: UIComponentData | undefined;
-
-    // Process parts to extract text and function calls
-    for (const part of modelParts) {
-      if (part.text) {
-        responseText += part.text;
+      if (mc.streaks.length > 0) {
+        systemContext += `\n\n[LONG-TERM MEMORY: STREAKS]`;
+        mc.streaks.forEach(s => {
+          systemContext += `\n- ${s.habitType}: ${s.currentStreak} days current (Best: ${s.longestStreak} days)`;
+          if (s.currentStreak === 7 || s.currentStreak === 14 || s.currentStreak === 30) systemContext += ` ⭐ MILESTONE - Consider showing achievementBadge!`;
+        });
+        systemContext += `\nINSTRUCTION: Celebrate streaks! Show streakTimeline after workouts. If streak is 0 or broken, gently encourage restart.`;
+        systemContext += `\nTOOL USAGE: When user asks about progress or after workout completion, use streakTimeline with habitName="${mc.streaks[0].habitType}", currentStreak=${mc.streaks[0].currentStreak}, longestStreak=${mc.streaks[0].longestStreak}`;
       }
-
-      if (part.functionCall) {
-        const fc = part.functionCall;
-        if (fc.name === 'renderUI') {
-          const args = fc.args as any;
-          if (args && args.type && args.props) {
-            // Validate that required props exist for this component type
-            if (validateUIComponent(args.type, args.props)) {
-              uiComponent = {
-                type: args.type,
-                props: args.props
-              };
-            } else {
-              console.warn(`GeminiService: Rejecting invalid UI component '${args.type}' - missing required props`, args.props);
-            }
-          }
-        } else {
-          // Collect other function calls (like calendar tools)
-          functionCalls.push({
-            name: fc.name,
-            args: fc.args as any
-          });
-        }
+      if (mc.recentWorkouts.length > 0) {
+        const completedCount = mc.recentWorkouts.filter(w => w.completed).length;
+        mc.recentWorkouts.forEach(w => {
+          const status = w.completed ? '✓ Completed' : '✗ Incomplete';
+          systemContext += `\n- ${w.type || 'Workout'} (${w.daysAgo === 0 ? 'Today' : `${w.daysAgo} days ago`}): ${status}`;
+        });
+        systemContext += `\nTotal Completed: ${completedCount} workouts`;
+        systemContext += `\nPROGRESS VISUALIZATION: When user asks about progress ("show my progress", "how am I doing", "progress this week"), always call renderUI with type 'chart' (and optionally streakTimeline/habitHeatmap). If ${completedCount >= 1 ? 'they have data' : 'they have no sessions'}, use chart with real data or with data: [] and emptyMessage: "No sessions yet — your first one will show here".`;
+      } else {
+        systemContext += `\n\nPROGRESS VISUALIZATION: When user asks about progress ("show my progress", "how am I doing", "progress this week"), always call renderUI with type 'chart', data: [], emptyMessage: "No sessions yet — your first one will show here".`;
+      }
+      if (mc.relevantMemories.length > 0) {
+        systemContext += `\n\n[SEMANTIC MEMORY: PAST CONTEXT]`;
+        mc.relevantMemories.forEach(m => { systemContext += `\n- "${m}"`; });
+        systemContext += `\nINSTRUCTION: Use these past insights to personalize your response.`;
+      }
+      if (mc.upcomingEvents.length > 0) {
+        systemContext += `\n\n[SCHEDULED EVENTS]`;
+        mc.upcomingEvents.forEach(e => { systemContext += `\n- ${e.title} at ${new Date(e.scheduledAt).toLocaleString()}`; });
       }
     }
-
-    // Fallback: Detect if the model output the function call as text (Hallucination check)
-    // Pattern: renderUI('type', { ... })
-    // We regex match the specific pattern seen in failures: renderUI( 'goalSelector', { ... } )
-    const leakMatch = responseText.match(/renderUI\s*\(\s*['"](\w+)['"]\s*,\s*(\{[\s\S]*?\})\s*\)/);
-
-    if (leakMatch && !uiComponent) {
-      const type = leakMatch[1];
-      let propsStr = leakMatch[2];
-
-      try {
-        // Attempt to sanitize pseudo-JSON (single quotes to double quotes)
-        // 1. Wrap keys in double quotes: 'key': -> "key":
-        propsStr = propsStr.replace(/([{,]\s*)'(\w+)'\s*:/g, '$1"$2":');
-        // 2. Wrap string values in double quotes: : 'value' -> : "value"
-        propsStr = propsStr.replace(/:\s*'([^']*)'/g, ': "$1"');
-
-        const props = JSON.parse(propsStr);
-
-        // Validate before accepting
-        if (validateUIComponent(type, props)) {
-          uiComponent = { type: type as any, props };
-        } else {
-          console.warn(`GeminiService: Rejecting leaked UI call '${type}' - missing required props`);
-        }
-
-        // Remove the raw function call text from the user-facing message
-        responseText = responseText.replace(leakMatch[0], '');
-
-      } catch (e) {
-        console.warn("Attempted to parse leaked UI call but failed:", e);
-        // Even if we fail to render, strip the ugly code
-        responseText = responseText.replace(leakMatch[0], '');
+    if (context.lifeContext) {
+      const lc = context.lifeContext;
+      systemContext += `\n\n[LIFE CONTEXT SUMMARY]`;
+      if (lc.profile.occupation || lc.profile.environment) systemContext += `\nOccupation: ${lc.profile.occupation || 'unknown'}; Environment: ${lc.profile.environment || 'unspecified'}.`;
+      if (lc.goals && lc.goals.length > 0) {
+        const topGoals = lc.goals.slice(0, 3);
+        systemContext += `\nGoals (top ${topGoals.length}):`;
+        topGoals.forEach((g, idx) => {
+          const streak = g.currentStreak ?? 0, best = g.bestStreak ?? streak, perWeek = g.targetPerWeek ?? '?', doneWeek = g.completionsThisWeek ?? 0;
+          systemContext += `\n  ${idx + 1}) ${g.label} – ${g.type}. Streak: ${streak} days (best ${best}). This week: ${doneWeek}/${perWeek}.`;
+        });
       }
+      if (lc.movementBaseline?.patternSummary) systemContext += `\nMovement baseline: ${lc.movementBaseline.patternSummary}`;
+      if (lc.schedule?.preferredTrainingWindows?.length > 0) systemContext += `\nPreferred training windows (coarse): ${lc.schedule.preferredTrainingWindows.map(w => w.label).join(', ')}.`;
+      else systemContext += `\nPreferred training windows: not known; ask the user briefly when they prefer to move.`;
+      if (lc.psychology) {
+        systemContext += `\nPrimary "why": ${lc.psychology.primaryWhy}.`;
+        if (lc.psychology.riskPatterns.length > 0) systemContext += `\nRisk patterns: ${lc.psychology.riskPatterns.join(', ')}.`;
+        systemContext += `\nTone guardrails: ${lc.psychology.toneGuardrails}`;
+      }
+      if (lc.suggestedNextAction) systemContext += `\nSuggested next action (use for proactive nudge when appropriate): ${lc.suggestedNextAction}`;
     }
+    if (context.onboardingState) {
+      const os = context.onboardingState;
+      systemContext += `\n\n[ONBOARDING STATE - PSYCHOLOGY-FIRST]`;
+      systemContext += `\nStage: ${os.stage}\nProfile Completeness: ${os.profileCompleteness}%\nPsychological State: ${os.psychologicalState}\nCan Ask Question Now: ${os.canAskQuestion ? 'YES' : 'NO (respect pacing)'}\nTotal Interactions: ${os.totalInteractions}`;
+      if (os.primaryMotivation) systemContext += `\nPrimary Motivation: ${os.primaryMotivation}`;
+      if (os.healthConditions.length > 0) systemContext += `\nHealth Conditions: ${os.healthConditions.join(', ')}`;
+      if (os.preferredWorkoutTime) systemContext += `\nPreferred Workout Time: ${os.preferredWorkoutTime}`;
+      systemContext += `\n\nINSTRUCTION: Follow PSYCHOLOGY-FIRST ONBOARDING protocols based on the psychologicalState above.`;
+      if (os.psychologicalState === 'stressed') systemContext += `\nCRITICAL: User is stressed - offer support ONLY, NO questions!`;
+      else if (os.psychologicalState === 'action_oriented') systemContext += `\nUser is action-oriented - deliver value first, questions only during breaks.`;
+      else if (os.psychologicalState === 'hesitant' && os.totalInteractions < 5) systemContext += `\nUser is hesitant with low interactions - build trust through value, ask nothing yet.`;
+      else if (os.psychologicalState === 'high_engagement' && os.canAskQuestion) systemContext += `\nUser is highly engaged - safe to ask contextual questions.`;
+    } else {
+      if (context.profile && context.profile.goals.length > 0) systemContext += `\n\nUSER STATE: Has defined goals - ${context.profile.goals.join(', ')}`;
+      else systemContext += `\n\nUSER STATE: New user - use action-parallel approach, deliver value first.`;
+    }
+  }
+  try {
+    const availableExercises = await getSupportedExerciseNames();
+    if (availableExercises.length > 0) {
+      systemContext += `\n\n[AVAILABLE EXERCISE DATABASE]\nThe following is the COMPLETE LIST of supported physical exercises.\nWhen generating a workout with physical exercises, you MUST strictly choose names from this list to ensure we can show a demonstration GIF.\nIf the user asks for an exercise not on this list, map it to the closest match from this list.\n\n${availableExercises.join(', ')}\n\nINSTRUCTION: Use ONLY these names for physical exercises in 'workoutList' or 'startGuidedActivity'.`;
+    }
+  } catch (e) {
+    console.warn("Failed to inject exercise database", e);
+  }
+  return systemContext;
+}
 
-    // Extract grounding metadata if available
-    const groundingChunks = candidate?.groundingMetadata?.groundingChunks || [];
+/**
+ * Run chat with a given Gemini client (raw or Opik-tracked). Used by sendMessageToGemini and by /api/chat for tracing.
+ */
+export async function runChatWithClient(
+  client: { models: { generateContent: (opts: any) => Promise<any> } },
+  history: Message[],
+  text: string,
+  systemContext: string
+): Promise<Partial<Message>> {
+  const contents = history.map(msg => ({
+    role: msg.role === MessageRole.USER ? 'user' : 'model',
+    parts: [{ text: msg.text }]
+  }));
+  contents.push({ role: 'user', parts: [{ text }] });
+  const searchKeywords = ['search', 'google', 'find', 'online', 'latest', 'research', 'news', 'lookup'];
+  const isResearchMode = searchKeywords.some(kw => text.toLowerCase().includes(kw));
+  const activeTools = isResearchMode ? [{ googleSearch: {} }] : [{ functionDeclarations: [renderUIFunction, calendarFunction, getEventsFunction] }];
+  const response = await client.models.generateContent({
+    model: MODEL_CHAT,
+    contents,
+    config: { systemInstruction: systemContext, tools: activeTools }
+  });
+  const candidate = response.candidates?.[0];
+  const modelParts = candidate?.content?.parts || [];
+  let responseText = "";
+  const functionCalls: { name: string; args: any }[] = [];
+  let uiComponent: UIComponentData | undefined;
+  for (const part of modelParts) {
+    // Only use text and functionCall; ignore thoughtSignature and other opaque fields.
+    if (part.text) responseText += part.text;
+    if (part.functionCall) {
+      const fc = part.functionCall;
+      if (fc.name === 'renderUI') {
+        const args = fc.args as any;
+        if (args?.type && args?.props && validateUIComponent(args.type, args.props)) uiComponent = { type: args.type, props: args.props };
+        else if (args?.type) console.warn(`GeminiService: Rejecting invalid UI component '${args.type}' - missing required props`, args.props);
+      } else functionCalls.push({ name: fc.name, args: fc.args as any });
+    }
+  }
+  const leakMatch = responseText.match(/renderUI\s*\(\s*['"](\w+)['"]\s*,\s*(\{[\s\S]*?\})\s*\)/);
+  if (leakMatch && !uiComponent) {
+    try {
+      let propsStr = leakMatch[2].replace(/([{,]\s*)'(\w+)'\s*:/g, '$1"$2":').replace(/:\s*'([^']*)'/g, ': "$1"');
+      const props = JSON.parse(propsStr);
+      if (validateUIComponent(leakMatch[1], props)) uiComponent = { type: leakMatch[1] as any, props };
+      responseText = responseText.replace(leakMatch[0], '');
+    } catch { responseText = responseText.replace(leakMatch[0], ''); }
+  }
+  const groundingChunks = candidate?.groundingMetadata?.groundingChunks || [];
+  return { text: responseText, uiComponent, groundingChunks: groundingChunks as any[], functionCalls };
+}
 
-    return {
-      text: responseText,
-      uiComponent,
-      groundingChunks: groundingChunks as any[],
-      functionCalls
-    };
-
+export const sendMessageToGemini = async (history: Message[], text: string, context?: UserContext): Promise<Partial<Message>> => {
+  try {
+    const systemContext = await buildSystemInstruction(context);
+    return runChatWithClient(ai, history, text, systemContext);
   } catch (error) {
     console.error("Error calling Gemini API:", error);
-    return {
-      text: "I'm focusing my energy on connecting to the server. Can you try that again?",
-    };
+    return { text: "I'm focusing my energy on connecting to the server. Can you try that again?" };
   }
 };
+

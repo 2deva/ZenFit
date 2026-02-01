@@ -1,12 +1,9 @@
-
 import { UserContext } from './geminiService';
 import { getOnboardingState } from './supabaseService';
 import { getFullUserContext, buildLifeContext } from './userContextService';
-import { SYSTEM_INSTRUCTION, API_KEY, MODEL_FAST } from '../constants';
-import { GoogleGenAI } from "@google/genai";
+import { SYSTEM_INSTRUCTION, MODEL_FAST } from '../constants';
 import { Message, MessageRole } from '../types';
-
-const ai = new GoogleGenAI({ apiKey: API_KEY });
+import { ai } from './opikGemini';
 
 // Extension of UserContext for Live Mode
 export interface UnifiedContext extends UserContext {

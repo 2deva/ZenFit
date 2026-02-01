@@ -6,8 +6,9 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
-import { API_KEY, MODEL_LIVE, SYSTEM_INSTRUCTION } from '../constants';
+import { LiveServerMessage, Modality } from '@google/genai';
+import { MODEL_LIVE, SYSTEM_INSTRUCTION } from '../constants';
+import { ai } from '../services/opikGemini';
 import {
   renderUIFunction,
   calendarFunction,
@@ -480,12 +481,7 @@ export const useLiveSession = ({
   useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
   useEffect(() => { isPausedRef.current = paceState.isPaused; }, [paceState.isPaused]);
 
-  // Stabilize AI client
-  const aiRef = useRef<GoogleGenAI | null>(null);
-  if (!aiRef.current) {
-    aiRef.current = new GoogleGenAI({ apiKey: API_KEY });
-  }
-  const ai = aiRef.current;
+  // Shared Opik-tracked Gemini client (see services/opikGemini.ts)
 
   // ──────────────────────────────────────────────────────────────────────────
   // AUDIO CLEANUP

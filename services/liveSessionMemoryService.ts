@@ -1,17 +1,15 @@
 /**
  * Live Session Memory Service
- * 
+ *
  * Handles mid-session memory extraction from voice transcriptions
  * and session summary generation when live mode ends.
  */
 
-import { GoogleGenAI } from "@google/genai";
-import { API_KEY, MODEL_FAST } from "../constants";
+import { MODEL_FAST } from "../constants";
 import { Message, MessageRole } from "../types";
 import { storeMemory } from "./supabaseService";
 import { generateEmbedding, classifyMemoryType } from "./embeddingService";
-
-const ai = new GoogleGenAI({ apiKey: API_KEY });
+import { ai } from "./opikGemini";
 
 // ============================================================================
 // TYPES & INTERFACES

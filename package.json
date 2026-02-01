@@ -6,6 +6,7 @@
   "scripts": {
     "lint": "tsc --noEmit",
     "dev": "vite",
+    "dev:api": "tsx scripts/dev-api-server.ts",
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest",
@@ -17,6 +18,7 @@
     "@vercel/analytics": "^1.6.1",
     "firebase": "^12.8.0",
     "lucide-react": "^0.562.0",
+    "opik": "^1.10.1",
     "opik-gemini": "^1.10.1",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
@@ -38,7 +40,9 @@
     "tailwindcss": "^4.1.18",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",
-    "vitest": "^2.1.9"
+    "vitest": "^2.1.9",
+    "dotenv": "^16.4.5",
+    "tsx": "^4.19.2"
   },
   "optionalDependencies": {
     "@sentry/react": "^8.55.0"
