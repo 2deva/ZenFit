@@ -97,11 +97,16 @@ INSTRUCTION: Subtly encourage sign-in for personalization and progress tracking 
 
     // Add Fitness Stats (Essential)
     if (context.fitnessStats) {
+        const sourceLabel = context.fitnessStats.connectionStatus === 'disconnected'
+            ? 'Disconnected — reconnect to see real data'
+            : context.fitnessStats.dataSource === 'google_fit'
+                ? 'Connected'
+                : context.fitnessStats.steps > 0 ? 'Connected' : 'Unavailable';
         systemContext += `\n\n[REAL-TIME FITNESS DATA DETECTED]
 Steps Today: ${context.fitnessStats.steps} / ${context.fitnessStats.stepsGoal}
 Calories Burned: ${context.fitnessStats.calories}
 Active Minutes: ${context.fitnessStats.activeMinutes}
-Health Data Source: ${context.fitnessStats.steps > 0 ? 'Connected' : 'Unavailable'}`;
+Health Data Source: ${sourceLabel}`;
     }
 
     // Add Detailed Important Context

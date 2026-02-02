@@ -12,7 +12,9 @@ interface ExerciseEntry {
     id: string;
     name: string;
     images: string[];
-    // Other fields (mechanic, force, etc.) omitted as we only need images
+    category?: string;
+    equipment?: string | null;
+    level?: string;
 }
 
 let dbCache: ExerciseEntry[] | null = null;
@@ -53,6 +55,13 @@ async function getDatabase(): Promise<ExerciseEntry[]> {
         });
 
     return fetchPromise;
+}
+
+/**
+ * Returns the exercise pool (same as getDatabase). Consumers may use category, equipment, level for filtering.
+ */
+export async function getExercisePool(): Promise<ExerciseEntry[]> {
+    return getDatabase();
 }
 
 const MANUAL_MAPPINGS: Record<string, string> = {

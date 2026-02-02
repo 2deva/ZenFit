@@ -501,12 +501,16 @@ export function generateDashboardProps(fitnessStats: {
   calories: number;
   activeMinutes: number;
   stepsGoal: number;
+  dataSource?: 'google_fit' | 'simulated';
+  connectionStatus?: 'connected' | 'disconnected';
 }): {
   dailyProgress: number;
   caloriesBurned: number;
   stepsTaken: number;
   stepsGoal: number;
   activeMinutes: number;
+  dataSource?: 'google_fit' | 'simulated';
+  connectionStatus?: 'connected' | 'disconnected';
 } {
   const dailyProgress = fitnessStats.stepsGoal > 0
     ? Math.min(100, Math.round((fitnessStats.steps / fitnessStats.stepsGoal) * 100))
@@ -517,7 +521,9 @@ export function generateDashboardProps(fitnessStats: {
     caloriesBurned: fitnessStats.calories || 0,
     stepsTaken: fitnessStats.steps || 0,
     stepsGoal: fitnessStats.stepsGoal || 8000,
-    activeMinutes: fitnessStats.activeMinutes || 0
+    activeMinutes: fitnessStats.activeMinutes || 0,
+    dataSource: fitnessStats.dataSource,
+    connectionStatus: fitnessStats.connectionStatus
   };
 }
 

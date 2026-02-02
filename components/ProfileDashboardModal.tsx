@@ -16,7 +16,7 @@ interface ProfileDashboardModalProps {
 }
 
 export function ProfileDashboardModal({ isOpen, onClose }: ProfileDashboardModalProps) {
-  const { user, signOut } = useAuth();
+  const { user, signOut, signInWithGoogle } = useAuth();
   const { dashboardSnapshot, refreshDashboardSnapshot, lifeContext } = useAppContext();
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -163,7 +163,7 @@ export function ProfileDashboardModal({ isOpen, onClose }: ProfileDashboardModal
               <div className="space-y-5 sm:space-y-6 w-full">
                 {/* Daily stats */}
                 {dashboardSnapshot.tools.dashboard && (
-                  <DashboardWidget {...dashboardSnapshot.tools.dashboard} />
+                  <DashboardWidget {...dashboardSnapshot.tools.dashboard} onReconnect={signInWithGoogle} />
                 )}
 
                 {/* Streak */}

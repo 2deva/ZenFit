@@ -4,6 +4,11 @@
   "devCommand": "npm run dev",
   "installCommand": "npm install",
   "framework": "vite",
+  "functions": {
+    "api/chat.ts": {
+      "includeFiles": "services/**"
+    }
+  },
   "rewrites": [
     {
       "source": "/(.*)",

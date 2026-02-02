@@ -7,7 +7,7 @@ import { STORAGE_KEYS } from "../constants/app";
  * Generates realistic data based on the time of day so the app feels "live"
  * even without a real Google Fit connection in this demo environment.
  */
-const getSimulatedStats = (): FitnessStats => {
+const getSimulatedStats = (overrides?: Partial<Pick<FitnessStats, 'dataSource' | 'connectionStatus'>>): FitnessStats => {
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const currentMs = now.getTime();
@@ -45,7 +45,9 @@ const getSimulatedStats = (): FitnessStats => {
     steps,
     calories,
     activeMinutes,
-    stepsGoal
+    stepsGoal,
+    dataSource: overrides?.dataSource ?? 'simulated',
+    connectionStatus: overrides?.connectionStatus
   };
 };
 
@@ -98,6 +100,11 @@ const fetchGoogleFitData = async (token: string): Promise<FitnessStats> => {
     })
   });
 
+  if (response.status === 401) {
+    localStorage.removeItem(STORAGE_KEYS.FITNESS_TOKEN);
+    console.warn('Google Fit token expired or invalid. Cleared token; show Reconnect in UI.');
+    return getSimulatedStats({ dataSource: 'simulated', connectionStatus: 'disconnected' });
+  }
   if (response.status === 403) {
     console.warn('Fitness API 403: access denied. Enable Fitness API in Cloud Console and ensure OAuth scopes include fitness.activity.read.');
     return getSimulatedStats();
@@ -119,6 +126,74 @@ const fetchGoogleFitData = async (token: string): Promise<FitnessStats> => {
     steps: Math.round(getValue(0)),
     calories: Math.round(getValue(1)),
     activeMinutes: Math.round(getValue(2)),
-    stepsGoal: 10000 // Could be fetched from a goals endpoint too
+    stepsGoal: 10000,
+    dataSource: 'google_fit',
+    connectionStatus: 'connected'
   };
+};
+
+const MS_PER_DAY = 86400000;
+
+export interface FitnessDayRow {
+  date: string;
+  steps: number;
+  activeMinutes: number;
+}
+
+/**
+ * Fetch last 7 days of steps and active minutes from Google Fit (one bucket per day).
+ * Returns empty array if no token or API fails.
+ */
+export const getFitnessDataLast7Days = async (): Promise<FitnessDayRow[]> => {
+  const token = localStorage.getItem(STORAGE_KEYS.FITNESS_TOKEN);
+  if (!token) return [];
+
+  const now = Date.now();
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+  const startTimeMillis = startOfDay.getTime() - (6 * MS_PER_DAY);
+
+  try {
+    const response = await fetch('https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        aggregateBy: [
+          { dataTypeName: "com.google.step_count.delta" },
+          { dataTypeName: "com.google.heart_minutes" }
+        ],
+        bucketByTime: { durationMillis: MS_PER_DAY },
+        startTimeMillis,
+        endTimeMillis: now
+      })
+    });
+
+    if (!response.ok) return [];
+
+    const data = await response.json();
+    const buckets = data.bucket ?? [];
+
+    return buckets.map((b: any) => {
+      const startMs = b.startTimeMillis ?? 0;
+      const date = new Date(startMs).toISOString().split('T')[0];
+      const datasets = b.dataset ?? [];
+      const getVal = (idx: number) => {
+        const ds = datasets[idx];
+        const point = ds?.point?.[0];
+        const v = point?.value?.[0];
+        return Math.round(v?.intVal ?? v?.fpVal ?? 0);
+      };
+      return {
+        date,
+        steps: getVal(0),
+        activeMinutes: getVal(1)
+      };
+    });
+  } catch (e) {
+    console.warn('getFitnessDataLast7Days failed:', e);
+    return [];
+  }
 };

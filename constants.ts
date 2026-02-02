@@ -509,9 +509,9 @@ ALWAYS generate options that match the conversation. NO generic fallbacks.
 ALWAYS set a meaningful label. Duration should match context.
 
 **workoutBuilder**: For ANY session configuration (MUST generate categories dynamically).
-Contract for physical sessions (so deterministic generator can run): use category ids "focus" or "type", "duration", and "level". Option ids: focus/type = strength, cardio, mobility, or exercise (generic mix). duration = 5, 10, 15, 20, 30. level = beginner, intermediate, advanced.
+Contract for physical sessions (so deterministic generator can run): use category ids "focus" or "type", "duration", and "level". Option ids: focus/type = strength, cardio, mobility, or exercise (generic mix). duration = 5, 10, 15, 20, 30. level = beginner, intermediate, advanced. Optional: "equipment" with options e.g. {id:"bodyweight", label:"Bodyweight only"} or {id:"gym", label:"Gym / weights"} so the user can choose no-equipment exercises when relevant.
 Physical session example:
-- categories: [{id:"focus", label:"Focus", options:[{id:"strength", label:"Strength", icon:"dumbbell"}, {id:"cardio", label:"Cardio", icon:"activity"}]}, {id:"duration", label:"Duration", options:[{id:"10", label:"10 min"}, {id:"20", label:"20 min"}]}, {id:"level", label:"Level", options:[{id:"beginner", label:"Beginner"}, {id:"intermediate", label:"Intermediate"}]}]
+- categories: [{id:"focus", label:"Focus", options:[{id:"strength", label:"Strength", icon:"dumbbell"}, {id:"cardio", label:"Cardio", icon:"activity"}]}, {id:"duration", label:"Duration", options:[{id:"10", label:"10 min"}, {id:"20", label:"20 min"}]}, {id:"level", label:"Level", options:[{id:"beginner", label:"Beginner"}, {id:"intermediate", label:"Intermediate"}]}, {id:"equipment", label:"Equipment", options:[{id:"bodyweight", label:"Bodyweight only"}, {id:"gym", label:"Gym / weights"}]}]
 
 Mental/Calm session example:
 - categories: [{id:"type", label:"Type", options:[{id:"breathing", label:"Breathing", icon:"wind"}, {id:"meditation", label:"Meditation", icon:"brain"}]}, {id:"style", label:"Style", options:[{id:"guided", label:"Guided"}, {id:"silent", label:"Silent"}]}]

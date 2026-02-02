@@ -1,12 +1,14 @@
 /**
  * Session Generator Service
- * 
+ *
  * Deterministic generator for Timer and WorkoutList sessions from builder configs.
- * This ensures every builder submission yields a concrete, well-typed session tool
- * without relying on LLM guessing.
+ * Physical workouts are built from the exercise pool (category, equipment, level); see EXERCISE_POOL_ANALYSIS.md.
  */
 
 import { normalizeGoalType, LifeContextGoalType } from './userContextService';
+
+/** Pool entry shape for filtering; matches exercise DB fields we use. */
+export type PoolEntry = { name: string; category?: string; equipment?: string | null; level?: string };
 
 export interface SessionConfig {
   type: 'timer' | 'workoutList';
@@ -48,6 +50,54 @@ export interface MindfulSessionConfig {
   pattern?: 'box' | '4-7-8' | 'calming' | 'energizing';
 }
 
+/** Minimal onboarding slice for workout brief; avoids importing full OnboardingState. */
+export interface WorkoutBriefOnboarding {
+  primaryMotivation?: string | null;
+  healthConditions?: string[];
+  preferredActivityTypes?: string[];
+}
+
+/**
+ * Build a short personalization brief for the physical-workout prompt.
+ * Ensures Gemini gets goal, constraints, and equipment explicitly for this turn.
+ * See .agent/docs/WORKOUT_PERSONALIZATION_FIRST_PRINCIPLES.md.
+ */
+export function buildWorkoutBrief(
+  onboarding: WorkoutBriefOnboarding | null | undefined,
+  selections: Record<string, string>
+): string {
+  const parts: string[] = [];
+  if (onboarding?.primaryMotivation) {
+    parts.push(`User's primary goal: ${onboarding.primaryMotivation.replace(/_/g, ' ')}.`);
+  }
+  if (onboarding?.healthConditions?.length) {
+    parts.push(`Health considerations: ${onboarding.healthConditions.join(', ')}. Choose only safe, appropriate exercises (e.g. low-impact or knee-friendly if relevant).`);
+  }
+  // Equipment: prefer builder choice for this session, then onboarding
+  const equipmentFromBuilder = (selections.equipment || selections.equipment_type || '').toLowerCase();
+  const isBodyweightFromBuilder = equipmentFromBuilder && /bodyweight|no_equipment|none|body.?weight/.test(equipmentFromBuilder);
+  const isGymFromBuilder = equipmentFromBuilder && /gym|weights|dumbbell|resistance/.test(equipmentFromBuilder);
+  if (isBodyweightFromBuilder) {
+    parts.push('Equipment: bodyweight only — choose exercises that require NO equipment.');
+  } else if (isGymFromBuilder) {
+    parts.push('Equipment: gym or weights OK.');
+  } else if (onboarding?.preferredActivityTypes?.length) {
+    const types = onboarding.preferredActivityTypes.map(t => t.toLowerCase());
+    const bodyweight = types.some(t => t.includes('bodyweight') || t.includes('home'));
+    const gym = types.some(t => t.includes('gym') || t.includes('weights'));
+    if (bodyweight && !gym) parts.push('Equipment: bodyweight only — choose exercises that require NO equipment.');
+    else if (gym) parts.push('Equipment: gym or weights OK.');
+  }
+  const focus = selections.focus || selections.type || '';
+  const duration = selections.duration || '10';
+  const level = selections.level || selections.intensity || '';
+  if (focus || duration || level) {
+    parts.push(`Request: ${[focus && `${focus}`, duration && `${duration} min`, level && level].filter(Boolean).join(', ')}.`);
+  }
+  if (parts.length === 0) return '';
+  return `[Workout context for this user] ${parts.join(' ')} `;
+}
+
 /** Normalize builder level/intensity to low | moderate | high for consistent programming. */
 function normalizeLevelToIntensity(raw: string | null | undefined): 'low' | 'moderate' | 'high' {
   if (!raw) return 'moderate';
@@ -64,11 +114,13 @@ function normalizeLevelToIntensity(raw: string | null | undefined): 'low' | 'mod
  *
  * @param selections - Builder category selections (e.g., { focus: 'strength', duration: '10', level: 'beginner' })
  * @param activeGoalIds - Optional array of goal IDs to tag this session with
+ * @param pool - Optional exercise pool (from getExercisePool); when provided, physical workouts are built from filtered pool
  * @returns SessionConfig with type, props, and inferred goalType
  */
 export function generateSessionFromBuilder(
   selections: Record<string, string>,
-  activeGoalIds?: string[]
+  activeGoalIds?: string[],
+  pool?: PoolEntry[]
 ): SessionConfig {
   const type = selections.type?.toLowerCase() || selections.focus?.toLowerCase() || '';
   const durationStr = selections.duration || '5';
@@ -76,8 +128,8 @@ export function generateSessionFromBuilder(
 
   // Normalize type to determine session type and goal type
   const normalizedType = normalizeGoalType(type);
-  
-  // Mental/calm sessions → Timer
+
+  // Mental/calm sessions → Timer (ignore pool)
   if (
     normalizedType === 'mindfulness' ||
     normalizedType === 'stress' ||
@@ -113,8 +165,8 @@ export function generateSessionFromBuilder(
     };
   }
 
-  // Physical sessions → WorkoutList
-  const workoutConfig = generateWorkoutList(type, durationMinutes, selections);
+  // Physical sessions → WorkoutList (from pool or fallback)
+  const workoutConfig = generateWorkoutList(type, durationMinutes, selections, pool);
   return {
     type: 'workoutList',
     props: workoutConfig,
@@ -143,47 +195,6 @@ function wrapWithWarmupCooldown(
   return [warmup, ...mainExercises, cooldown];
 }
 
-/**
- * Generate a WorkoutList config for physical sessions.
- * Uses normalized level (beginner → low, advanced → high) and adds warmup + cooldown.
- */
-function generateWorkoutList(
-  type: string,
-  durationMinutes: number,
-  selections: Record<string, string>
-): WorkoutListConfig {
-  const normalizedType = normalizeGoalType(type);
-  const rawLevel = selections.intensity ?? selections.level ?? '';
-  const intensity = normalizeLevelToIntensity(rawLevel);
-
-  let title = '';
-  let mainExercises: WorkoutListConfig['exercises'] = [];
-
-  // Strength workouts
-  if (normalizedType === 'strength' || type.includes('strength') || type.includes('lift')) {
-    title = `${durationMinutes}-Minute Strength Session`;
-    mainExercises = generateStrengthExercises(durationMinutes, intensity);
-  }
-  // Cardio workouts
-  else if (normalizedType === 'cardio' || type.includes('cardio') || type.includes('hiit') || type.includes('run')) {
-    title = `${durationMinutes}-Minute Cardio Session`;
-    mainExercises = generateCardioExercises(durationMinutes, intensity);
-  }
-  // Mobility/yoga
-  else if (normalizedType === 'mobility' || type.includes('mobility') || type.includes('yoga') || type.includes('stretch')) {
-    title = `${durationMinutes}-Minute Mobility Session`;
-    mainExercises = generateMobilityExercises(durationMinutes, intensity);
-  }
-  // Generic/fallback (e.g. type "exercise")
-  else {
-    title = `${durationMinutes}-Minute Workout`;
-    mainExercises = generateGenericExercises(durationMinutes, intensity);
-  }
-
-  const exercises = wrapWithWarmupCooldown(mainExercises, durationMinutes);
-  return { title, exercises };
-}
-
 /** Slice main exercises so total with warmup+cooldown fits duration (2 main for ≤10 min, 4 for ≤15, else 6). */
 function sliceByDuration<T>(arr: T[], durationMinutes: number): T[] {
   if (durationMinutes <= 10) return arr.slice(0, 2);
@@ -191,97 +202,180 @@ function sliceByDuration<T>(arr: T[], durationMinutes: number): T[] {
   return arr.slice(0, 6);
 }
 
-/**
- * Generate strength exercises based on duration and normalized intensity.
- * Low (beginner): fewer reps, longer rest. High: more reps, shorter rest.
- */
-function generateStrengthExercises(durationMinutes: number, intensity: 'low' | 'moderate' | 'high'): WorkoutListConfig['exercises'] {
-  const repsPerSet = intensity === 'low' ? '6-8' : intensity === 'high' ? '12-15' : '8-12';
+/** DB categories to include per builder focus. */
+function getDbCategoriesForFocus(normalizedType: LifeContextGoalType, type: string): string[] {
+  if (normalizedType === 'strength' || type.includes('strength') || type.includes('lift')) {
+    return ['strength', 'strongman', 'powerlifting'];
+  }
+  if (normalizedType === 'cardio' || type.includes('cardio') || type.includes('hiit') || type.includes('run')) {
+    return ['cardio', 'plyometrics'];
+  }
+  if (normalizedType === 'mobility' || type.includes('mobility') || type.includes('yoga') || type.includes('stretch')) {
+    return ['stretching'];
+  }
+  return ['strength', 'cardio', 'plyometrics', 'stretching', 'strongman', 'powerlifting'];
+}
+
+/** Bodyweight only from selections (same logic as buildWorkoutBrief). */
+function isBodyweightOnly(selections: Record<string, string>): boolean {
+  const equipmentFromBuilder = (selections.equipment || selections.equipment_type || '').toLowerCase();
+  return !!equipmentFromBuilder && /bodyweight|no_equipment|none|body.?weight/.test(equipmentFromBuilder);
+}
+
+/** Whether DB level is allowed for user level (beginner → only beginner; intermediate → beginner+intermediate; advanced → any). */
+function isLevelAllowed(dbLevel: string | undefined, userLevel: string): boolean {
+  if (!dbLevel) return true;
+  const u = userLevel.toLowerCase();
+  if (u.includes('beginner')) return dbLevel === 'beginner';
+  if (u.includes('intermediate')) return dbLevel === 'beginner' || dbLevel === 'intermediate';
+  return true; // advanced or expert: allow all
+}
+
+/** Filter pool by category, equipment, level. */
+function filterPool(
+  pool: PoolEntry[],
+  type: string,
+  normalizedType: LifeContextGoalType,
+  selections: Record<string, string>
+): PoolEntry[] {
+  const categories = new Set(getDbCategoriesForFocus(normalizedType, type));
+  const bodyweightOnly = isBodyweightOnly(selections);
+  const rawLevel = selections.intensity ?? selections.level ?? '';
+
+  return pool.filter((e) => {
+    if (e.category && !categories.has(e.category)) return false;
+    if (bodyweightOnly) {
+      if (e.equipment !== 'body only' && e.equipment != null) return false;
+    }
+    if (!isLevelAllowed(e.level, rawLevel)) return false;
+    return true;
+  });
+}
+
+/** Assign dose (reps or duration, restAfter) per category and intensity. */
+function assignDose(
+  entries: PoolEntry[],
+  normalizedType: LifeContextGoalType,
+  type: string,
+  intensity: 'low' | 'moderate' | 'high'
+): WorkoutListConfig['exercises'] {
   const restSeconds = intensity === 'low' ? 50 : intensity === 'high' ? 30 : 45;
-
-  const exercises: WorkoutListConfig['exercises'] = [
-    { name: 'Push-ups', reps: `${repsPerSet} reps`, restAfter: restSeconds },
-    { name: 'Dumbbell Rows', reps: `${repsPerSet} reps per arm`, restAfter: restSeconds },
-    { name: 'Squats', reps: `${repsPerSet} reps`, restAfter: restSeconds },
-    { name: 'Lunges', reps: `${repsPerSet} reps per leg`, restAfter: restSeconds },
-    { name: 'Plank', duration: intensity === 'low' ? '20-30 seconds' : '30-45 seconds', restAfter: restSeconds },
-    { name: 'Mountain Climbers', reps: intensity === 'low' ? '10 reps' : '20 reps', restAfter: restSeconds },
-    { name: 'Burpees', reps: '8-10 reps', restAfter: restSeconds },
-    { name: 'Deadlifts (bodyweight)', reps: `${repsPerSet} reps`, restAfter: restSeconds }
-  ];
-  return sliceByDuration(exercises, durationMinutes);
-}
-
-/**
- * Generate cardio exercises. Low (beginner): longer work/rest, lower-impact first. High: shorter work/rest.
- */
-function generateCardioExercises(durationMinutes: number, intensity: 'low' | 'moderate' | 'high'): WorkoutListConfig['exercises'] {
+  const restCardio = intensity === 'low' ? 30 : intensity === 'high' ? 15 : 30;
   const workDuration = intensity === 'low' ? '45 seconds' : intensity === 'high' ? '30 seconds' : '45 seconds';
-  const restDuration = intensity === 'low' ? 30 : intensity === 'high' ? 15 : 30;
-
-  // Beginner-friendly order: lower impact first (march, step jacks) then progress
-  const all = intensity === 'low'
-    ? [
-        { name: 'March in Place', duration: workDuration, restAfter: restDuration },
-        { name: 'Step Jacks', duration: workDuration, restAfter: restDuration },
-        { name: 'Jumping Jacks', duration: workDuration, restAfter: restDuration },
-        { name: 'High Knees', duration: workDuration, restAfter: restDuration },
-        { name: 'Mountain Climbers', duration: workDuration, restAfter: restDuration },
-        { name: 'Squat Jumps', duration: workDuration, restAfter: restDuration },
-        { name: 'Butt Kicks', duration: workDuration, restAfter: restDuration },
-        { name: 'Star Jumps', duration: workDuration, restAfter: restDuration }
-      ]
-    : [
-        { name: 'Jumping Jacks', duration: workDuration, restAfter: restDuration },
-        { name: 'High Knees', duration: workDuration, restAfter: restDuration },
-        { name: 'Burpees', duration: workDuration, restAfter: restDuration },
-        { name: 'Mountain Climbers', duration: workDuration, restAfter: restDuration },
-        { name: 'Squat Jumps', duration: workDuration, restAfter: restDuration },
-        { name: 'Plank Jacks', duration: workDuration, restAfter: restDuration },
-        { name: 'Butt Kicks', duration: workDuration, restAfter: restDuration },
-        { name: 'Star Jumps', duration: workDuration, restAfter: restDuration }
-      ];
-  return sliceByDuration(all, durationMinutes);
-}
-
-/**
- * Generate mobility/yoga exercises. Intensity affects hold length and count.
- */
-function generateMobilityExercises(durationMinutes: number, intensity: 'low' | 'moderate' | 'high'): WorkoutListConfig['exercises'] {
   const holdDuration = intensity === 'low' ? '20-30 seconds' : '30-45 seconds';
-  const restBetween = intensity === 'low' ? 15 : 10;
+  const repsPerSet = intensity === 'low' ? '6-8' : intensity === 'high' ? '12-15' : '8-12';
+  const restMobility = intensity === 'low' ? 15 : 10;
 
-  const exercises: WorkoutListConfig['exercises'] = [
-    { name: 'Cat-Cow Stretch', duration: '10 reps', restAfter: 0 },
-    { name: 'Downward Dog', duration: holdDuration, restAfter: restBetween },
-    { name: 'Warrior I (Right)', duration: holdDuration, restAfter: restBetween },
-    { name: 'Warrior I (Left)', duration: holdDuration, restAfter: restBetween },
-    { name: 'Child\'s Pose', duration: '30 seconds', restAfter: restBetween },
-    { name: 'Seated Forward Fold', duration: holdDuration, restAfter: restBetween },
-    { name: 'Pigeon Pose (Right)', duration: holdDuration, restAfter: restBetween },
-    { name: 'Pigeon Pose (Left)', duration: holdDuration, restAfter: restBetween },
-    { name: 'Supine Twist', duration: '30 seconds per side', restAfter: restBetween }
-  ];
-  return sliceByDuration(exercises, durationMinutes);
+  const isStrength = normalizedType === 'strength' || type.includes('strength') || type.includes('lift');
+  const isCardio = normalizedType === 'cardio' || type.includes('cardio') || type.includes('hiit') || type.includes('run');
+  const isMobility = normalizedType === 'mobility' || type.includes('mobility') || type.includes('yoga') || type.includes('stretch');
+
+  return entries.map((e) => {
+    if (isStrength) {
+      return { name: e.name, reps: `${repsPerSet} reps`, restAfter: restSeconds };
+    }
+    if (isCardio) {
+      return { name: e.name, duration: workDuration, restAfter: restCardio };
+    }
+    if (isMobility) {
+      return { name: e.name, duration: holdDuration, restAfter: restMobility };
+    }
+    return { name: e.name, reps: `${repsPerSet} reps`, restAfter: restSeconds };
+  });
+}
+
+/** Minimal fallback when pool is empty or filter yields 0 (names that exist in DB). */
+function getFallbackExercises(
+  normalizedType: LifeContextGoalType,
+  type: string,
+  durationMinutes: number,
+  intensity: 'low' | 'moderate' | 'high'
+): WorkoutListConfig['exercises'] {
+  const restSeconds = intensity === 'low' ? 50 : intensity === 'high' ? 30 : 45;
+  const workDuration = intensity === 'low' ? '45 seconds' : intensity === 'high' ? '30 seconds' : '45 seconds';
+  const holdDuration = intensity === 'low' ? '20-30 seconds' : '30-45 seconds';
+  const repsPerSet = intensity === 'low' ? '6-8' : intensity === 'high' ? '12-15' : '8-12';
+  const restMobility = intensity === 'low' ? 15 : 10;
+
+  const isStrength = normalizedType === 'strength' || type.includes('strength') || type.includes('lift');
+  const isCardio = normalizedType === 'cardio' || type.includes('cardio') || type.includes('hiit') || type.includes('run');
+  const isMobility = normalizedType === 'mobility' || type.includes('mobility') || type.includes('yoga') || type.includes('stretch');
+
+  let list: WorkoutListConfig['exercises'];
+  if (isStrength) {
+    list = [
+      { name: 'Push-up', reps: `${repsPerSet} reps`, restAfter: restSeconds },
+      { name: 'Squat', reps: `${repsPerSet} reps`, restAfter: restSeconds },
+      { name: 'Plank', duration: intensity === 'low' ? '20-30 seconds' : '30-45 seconds', restAfter: restSeconds },
+      { name: 'Lunge', reps: `${repsPerSet} reps per leg`, restAfter: restSeconds }
+    ];
+  } else if (isCardio) {
+    list = [
+      { name: 'Jumping Jack', duration: workDuration, restAfter: 30 },
+      { name: 'High Knees', duration: workDuration, restAfter: 30 },
+      { name: 'Mountain Climber', duration: workDuration, restAfter: 30 },
+      { name: 'Burpee', duration: workDuration, restAfter: 30 }
+    ];
+  } else if (isMobility) {
+    list = [
+      { name: 'Cat Stretch', duration: '10 reps', restAfter: 0 },
+      { name: 'Downward Dog', duration: holdDuration, restAfter: restMobility },
+      { name: 'Child\'s Pose', duration: '30 seconds', restAfter: restMobility },
+      { name: 'Seated Forward Fold', duration: holdDuration, restAfter: restMobility }
+    ];
+  } else {
+    list = [
+      { name: 'Jumping Jack', duration: workDuration, restAfter: restSeconds },
+      { name: 'Push-up', reps: `${repsPerSet} reps`, restAfter: restSeconds },
+      { name: 'Squat', reps: `${repsPerSet} reps`, restAfter: restSeconds },
+      { name: 'Plank', duration: intensity === 'low' ? '20 seconds' : '30 seconds', restAfter: restSeconds }
+    ];
+  }
+  return sliceByDuration(list, durationMinutes);
 }
 
 /**
- * Generate generic mixed exercises (fallback when type is e.g. "exercise"). Level affects volume and rest.
+ * Generate a WorkoutList config for physical sessions.
+ * When pool is provided and filter yields exercises: filter by category, equipment, level; sort by name; slice; assign dose.
+ * Otherwise: minimal fallback list (names that exist in DB).
  */
-function generateGenericExercises(durationMinutes: number, intensity: 'low' | 'moderate' | 'high'): WorkoutListConfig['exercises'] {
-  const workDuration = intensity === 'low' ? '45 seconds' : '45 seconds';
-  const restDuration = intensity === 'low' ? 35 : intensity === 'high' ? 25 : 30;
-  const reps = intensity === 'low' ? '8-10' : intensity === 'high' ? '12-15' : '10-12';
+function generateWorkoutList(
+  type: string,
+  durationMinutes: number,
+  selections: Record<string, string>,
+  pool?: PoolEntry[]
+): WorkoutListConfig {
+  const normalizedType = normalizeGoalType(type);
+  const rawLevel = selections.intensity ?? selections.level ?? '';
+  const intensity = normalizeLevelToIntensity(rawLevel);
 
-  const exercises: WorkoutListConfig['exercises'] = [
-    { name: 'Jumping Jacks', duration: workDuration, restAfter: restDuration },
-    { name: 'Push-ups', reps: `${reps} reps`, restAfter: restDuration },
-    { name: 'Squats', reps: intensity === 'low' ? '10-12 reps' : '12-15 reps', restAfter: restDuration },
-    { name: 'Plank', duration: intensity === 'low' ? '20 seconds' : '30 seconds', restAfter: restDuration },
-    { name: 'Lunges', reps: `${intensity === 'low' ? '8' : '10'} reps per leg`, restAfter: restDuration },
-    { name: 'Burpees', reps: intensity === 'low' ? '5-6 reps' : '8-10 reps', restAfter: restDuration }
-  ];
-  return sliceByDuration(exercises, durationMinutes);
+  let title = '';
+  if (normalizedType === 'strength' || type.includes('strength') || type.includes('lift')) {
+    title = `${durationMinutes}-Minute Strength Session`;
+  } else if (normalizedType === 'cardio' || type.includes('cardio') || type.includes('hiit') || type.includes('run')) {
+    title = `${durationMinutes}-Minute Cardio Session`;
+  } else if (normalizedType === 'mobility' || type.includes('mobility') || type.includes('yoga') || type.includes('stretch')) {
+    title = `${durationMinutes}-Minute Mobility Session`;
+  } else {
+    title = `${durationMinutes}-Minute Workout`;
+  }
+
+  let mainExercises: WorkoutListConfig['exercises'];
+  if (pool && pool.length > 0) {
+    const filtered = filterPool(pool, type, normalizedType, selections);
+    const sorted = [...filtered].sort((a, b) => a.name.localeCompare(b.name));
+    const sliced = sliceByDuration(sorted, durationMinutes);
+    if (sliced.length > 0) {
+      mainExercises = assignDose(sliced, normalizedType, type, intensity);
+    } else {
+      mainExercises = getFallbackExercises(normalizedType, type, durationMinutes, intensity);
+    }
+  } else {
+    mainExercises = getFallbackExercises(normalizedType, type, durationMinutes, intensity);
+  }
+
+  const exercises = wrapWithWarmupCooldown(mainExercises, durationMinutes);
+  return { title, exercises };
 }
 
 /**

@@ -339,7 +339,13 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
             if (apiRes.ok) {
                 response = await apiRes.json();
             } else {
-                response = await sendMessageToGemini(messages.concat(userMsg), userMsg.text, context);
+                const errData = await apiRes.json().catch(() => ({}));
+                response = { text: (errData as { text?: string }).text || "I'm having trouble connecting. Please try again." };
+                const askCalendar = content.toLowerCase().includes('calendar') || content.toLowerCase().includes('schedule');
+                if (askCalendar) {
+                    const events = await getUpcomingEvents(5);
+                    response.uiComponent = { type: 'calendar', props: { events } } as UIComponentData;
+                }
             }
         } catch {
             response = await sendMessageToGemini(messages.concat(userMsg), userMsg.text, context);

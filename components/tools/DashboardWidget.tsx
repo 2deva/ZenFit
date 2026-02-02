@@ -7,10 +7,14 @@ interface DashboardProps {
   stepsTaken: number;
   stepsGoal: number;
   activeMinutes: number;
+  dataSource?: 'google_fit' | 'simulated';
+  connectionStatus?: 'connected' | 'disconnected';
+  onReconnect?: () => void;
 }
 
 export const DashboardWidget: React.FC<DashboardProps> = ({
-  dailyProgress = 45, caloriesBurned = 420, stepsTaken = 2340, stepsGoal = 8000, activeMinutes = 45
+  dailyProgress = 45, caloriesBurned = 420, stepsTaken = 2340, stepsGoal = 8000, activeMinutes = 45,
+  dataSource, connectionStatus, onReconnect
 }) => {
   return (
     <div className="w-full max-w-sm animate-slide-up-fade">
@@ -71,6 +75,24 @@ export const DashboardWidget: React.FC<DashboardProps> = ({
             <span className="text-[9px] sm:text-[10px] uppercase font-display font-bold text-ink-400 tracking-wider">Mins</span>
           </div>
         </div>
+      </div>
+
+      {/* Data source label and Reconnect */}
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[10px] sm:text-xs text-ink-400 font-body">
+          {dataSource === 'google_fit' && 'From Google Fit'}
+          {dataSource === 'simulated' && connectionStatus !== 'disconnected' && 'Demo data'}
+          {dataSource === 'simulated' && connectionStatus === 'disconnected' && 'Disconnected'}
+        </span>
+        {connectionStatus === 'disconnected' && onReconnect && (
+          <button
+            type="button"
+            onClick={onReconnect}
+            className="text-xs font-medium text-claude-600 hover:text-claude-700 underline focus:outline-none focus:ring-2 focus:ring-claude-400 rounded"
+          >
+            Reconnect Google
+          </button>
+        )}
       </div>
     </div>
   );

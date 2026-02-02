@@ -46,6 +46,10 @@ export interface FitnessStats {
   calories: number;
   activeMinutes: number;
   stepsGoal: number;
+  /** Source of the data: real Fit API or simulated. */
+  dataSource?: 'google_fit' | 'simulated';
+  /** When dataSource is simulated after a 401, use 'disconnected' so UI can show Reconnect. */
+  connectionStatus?: 'connected' | 'disconnected';
 }
 
 // ============================================================================

@@ -177,6 +177,32 @@ export const getUserGoals = async (userId: string): Promise<UserGoal[]> => {
     }
 };
 
+const STEP_GOAL_MIN = 1000;
+const STEP_GOAL_MAX = 50000;
+const STEP_GOAL_DEFAULT = 8000;
+
+/**
+ * Resolve daily step goal from user goals (steps/walking-related goal with target_value).
+ * Returns default 8000 if no matching goal.
+ */
+export const getStepGoalForUser = async (userId: string): Promise<number> => {
+    try {
+        const goals = await getUserGoals(userId);
+        const labelLower = (s: string) => (s || '').toLowerCase();
+        const stepGoal = goals.find(g => {
+            const type = labelLower(g.goal_type);
+            const label = labelLower(g.goal_label);
+            const isStepRelated = type === 'cardio' || label.includes('step') || label.includes('walk');
+            const value = g.target_value ?? 0;
+            return isStepRelated && value >= STEP_GOAL_MIN && value <= STEP_GOAL_MAX;
+        });
+        return stepGoal?.target_value ?? STEP_GOAL_DEFAULT;
+    } catch (e) {
+        console.warn('getStepGoalForUser failed, using default:', e);
+        return STEP_GOAL_DEFAULT;
+    }
+};
+
 // ============================================
 // WORKOUT PROGRESS SYNC (Cross-Device)
 // ============================================

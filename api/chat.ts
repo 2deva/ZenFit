@@ -5,7 +5,7 @@
 
 import { GoogleGenAI } from "@google/genai";
 import { trackGemini } from "opik-gemini";
-import { runChatWithClient } from "../services/geminiService";
+import { runChatWithClient } from "../services/geminiService.js";
 
 export const config = { maxDuration: 60 };
 

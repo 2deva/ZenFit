@@ -17,7 +17,8 @@ import {
     getOnboardingState
 } from './supabaseService';
 import { findRelevantMemories } from './embeddingService';
-import { getFitnessData } from './fitnessService';
+import { getFitnessData, getFitnessDataLast7Days } from './fitnessService';
+import { STORAGE_KEYS } from '../constants/app';
 import {
     LifeContextGoal,
     LifeContextGoalProgress,
@@ -213,31 +214,37 @@ export async function getGoalStreakSummary(
 }
 
 /**
- * Build a simple movement baseline using existing fitnessStats helpers.
- * Currently uses today's Google Fit data as a proxy and generates a
- * conservative pattern summary.
+ * Build a simple movement baseline using today's Fit data and, when connected,
+ * real last-7-days from the Fit API.
  */
 export async function getMovementBaseline(userId: string | null): Promise<LifeContextMovementBaseline> {
     try {
-        // For now we don't yet persist historical Fit data per user, so we use
-        // the current-day fitness snapshot and replicate it across 7 days as
-        // a stable baseline. This is still useful for the model to reason about
-        // \"low\" vs \"high\" movement.
         const fitnessStats = await getFitnessData();
+        const token = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_KEYS.FITNESS_TOKEN) : null;
+        const useFit = fitnessStats.dataSource === 'google_fit';
 
-        const today = new Date();
-        const last7Days = Array.from({ length: 7 }, (_, i) => {
-            const d = new Date(today);
-            d.setDate(d.getDate() - (6 - i));
-            return {
-                date: d.toISOString().split('T')[0],
-                steps: fitnessStats.steps,
-                activeMinutes: fitnessStats.activeMinutes
-            };
-        });
+        let last7Days: Array<{ date: string; steps: number; activeMinutes: number }>;
+        let avgDailySteps: number;
+        let avgDailyActiveMinutes: number;
 
-        const avgDailySteps = fitnessStats.steps;
-        const avgDailyActiveMinutes = fitnessStats.activeMinutes;
+        if (useFit && token) {
+            const realLast7 = await getFitnessDataLast7Days();
+            if (realLast7.length > 0) {
+                last7Days = realLast7;
+                const sumSteps = realLast7.reduce((s, d) => s + d.steps, 0);
+                const sumMins = realLast7.reduce((s, d) => s + d.activeMinutes, 0);
+                avgDailySteps = Math.round(sumSteps / realLast7.length);
+                avgDailyActiveMinutes = Math.round(sumMins / realLast7.length);
+            } else {
+                last7Days = replicateToday7(fitnessStats.steps, fitnessStats.activeMinutes);
+                avgDailySteps = fitnessStats.steps;
+                avgDailyActiveMinutes = fitnessStats.activeMinutes;
+            }
+        } else {
+            last7Days = replicateToday7(fitnessStats.steps, fitnessStats.activeMinutes);
+            avgDailySteps = fitnessStats.steps;
+            avgDailyActiveMinutes = fitnessStats.activeMinutes;
+        }
 
         let patternSummary = '';
         if (avgDailySteps === 0 && avgDailyActiveMinutes === 0) {
@@ -251,7 +258,7 @@ export async function getMovementBaseline(userId: string | null): Promise<LifeCo
         }
 
         return {
-            source: 'google_fit',
+            source: useFit ? 'google_fit' : 'none',
             avgDailySteps,
             avgDailyActiveMinutes,
             last7Days,
@@ -279,6 +286,19 @@ export async function getMovementBaseline(userId: string | null): Promise<LifeCo
             patternSummary: 'Movement data is currently unavailable. Ask the user a quick question about how much they move in a typical day before making strong assumptions.'
         };
     }
+}
+
+function replicateToday7(steps: number, activeMinutes: number): Array<{ date: string; steps: number; activeMinutes: number }> {
+    const today = new Date();
+    return Array.from({ length: 7 }, (_, i) => {
+        const d = new Date(today);
+        d.setDate(d.getDate() - (6 - i));
+        return {
+            date: d.toISOString().split('T')[0],
+            steps,
+            activeMinutes
+        };
+    });
 }
 
 /**
@@ -681,8 +701,17 @@ export const buildLifeContext = async (
         }
 
         // Suggested next action for proactive nudge (resolution adherence)
-        const hasMovementToday = memContext?.recentWorkouts?.some(w => w.daysAgo === 0 && w.completed) ?? false;
+        // Movement today = Zenfit workout completed OR Fit steps/active minutes above thresholds
+        const MOVEMENT_STEPS_THRESHOLD = 4000;
+        const MOVEMENT_ACTIVE_MINUTES_THRESHOLD = 10;
+        const hasWorkoutToday = memContext?.recentWorkouts?.some(w => w.daysAgo === 0 && w.completed) ?? false;
+        const stepsOk = (movementBaseline.avgDailySteps ?? 0) >= MOVEMENT_STEPS_THRESHOLD;
+        const activeMinsOk = (movementBaseline.avgDailyActiveMinutes ?? 0) >= MOVEMENT_ACTIVE_MINUTES_THRESHOLD;
+        const hasMovementToday = hasWorkoutToday || stepsOk || activeMinsOk;
         const noMovementToday = !hasMovementToday;
+        const lowMovementBaseline = movementBaseline.patternSummary.toLowerCase().includes('low') ||
+            (movementBaseline.avgDailySteps ?? 0) < MOVEMENT_STEPS_THRESHOLD;
+
         const streak = Math.max(0, ...lifeContextGoals.map(g => g.currentStreak ?? 0));
         const now = new Date();
         const currentHour = now.getHours();
@@ -693,7 +722,9 @@ export const buildLifeContext = async (
         }) ?? false;
 
         let suggestedNextAction: string;
-        if (noMovementToday) {
+        if (noMovementToday && lowMovementBaseline) {
+            suggestedNextAction = 'Strong nudge: low steps and no workout today — suggest a 10-min session or 5-min stretch/breathing.';
+        } else if (noMovementToday) {
             suggestedNextAction = 'No movement today — suggest 10-min session (or 5-min stretch/breathing).';
         } else if (streak > 0) {
             suggestedNextAction = `${streak}-day streak — nudge to maintain (one more session today).`;

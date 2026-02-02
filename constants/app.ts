@@ -16,6 +16,7 @@ export const STORAGE_KEYS = {
     LEGACY_CHAT_HISTORY: 'zen_chat_history',
     WORKOUT_PREFIX: 'zen_workout_',
     SYNC_QUEUE: 'zenfit_sync_queue_v1',
+    CALENDAR_NUDGE_DATE: 'zenfit_calendar_nudge_date',
 } as const;
 
 // ============================================================================

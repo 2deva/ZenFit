@@ -436,11 +436,16 @@ export async function buildSystemInstruction(context?: UserContext): Promise<str
       systemContext += `\nUser Location Lat/Lng: ${context.location.lat}, ${context.location.lng}`;
     }
     if (context.fitnessStats) {
+      const sourceLabel = context.fitnessStats.connectionStatus === 'disconnected'
+        ? 'Disconnected — reconnect to see real data'
+        : context.fitnessStats.dataSource === 'google_fit'
+          ? 'Connected'
+          : context.fitnessStats.steps > 0 ? 'Connected' : 'Unavailable';
       systemContext += `\n\n[REAL-TIME FITNESS DATA DETECTED]
 Steps Today: ${context.fitnessStats.steps} / ${context.fitnessStats.stepsGoal}
 Calories Burned: ${context.fitnessStats.calories}
 Active Minutes: ${context.fitnessStats.activeMinutes}
-Health Data Source: ${context.fitnessStats.steps > 0 ? 'Connected' : 'Unavailable'}
+Health Data Source: ${sourceLabel}
 INSTRUCTION: Use this data to populate the 'dashboard' component if asked.`;
     }
     if (context.isAuthenticated && context.userName) {

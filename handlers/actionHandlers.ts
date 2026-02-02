@@ -6,6 +6,7 @@
 import { UserProfile } from '../types';
 import { saveUserGoals, logWorkoutSession, getStreak, getRecentWorkouts, updateOnboardingState, getOnboardingState, getUserGoals } from '../services/supabaseService';
 import { normalizeGoalType } from '../services/userContextService';
+import { getExercisePool } from '../services/exerciseGifService';
 import { generateSessionFromBuilder } from '../services/sessionGeneratorService';
 import { ACTIONS, NUMBERS } from '../constants/app';
 import { Message, MessageRole, UIComponentData } from '../types';
@@ -55,6 +56,7 @@ export const createActionHandlers = (options: ActionHandlersOptions, timerActivi
         onboardingState,
         setOnboardingState,
         setCurrentWorkoutProgress,
+        setLastGeneratedWorkout,
         addUIInteraction,
         handleSendMessage,
         setMessages,
@@ -112,9 +114,6 @@ export const createActionHandlers = (options: ActionHandlersOptions, timerActivi
         [ACTIONS.GENERATE_WORKOUT]: async (data: Record<string, string>) => {
             addUIInteraction('workoutBuilder');
 
-            // 1. Generate a preliminary config to check the type
-            // We use this to detect if it's a "Mindful/Timer" session (which we keep deterministic)
-            // or a "Physical/Workout" session (which we want Gemini to generate dynamically).
             let goalIds: string[] = [];
             try {
                 if (supabaseUserId) {
@@ -125,11 +124,16 @@ export const createActionHandlers = (options: ActionHandlersOptions, timerActivi
                 console.warn('GENERATE_WORKOUT: Failed to load active goals', e);
             }
 
-            const sessionConfig = generateSessionFromBuilder(data, goalIds);
+            let pool: { name: string; category?: string; equipment?: string | null; level?: string }[] = [];
+            try {
+                pool = await getExercisePool();
+            } catch (e) {
+                console.warn('GENERATE_WORKOUT: Failed to load exercise pool', e);
+            }
+
+            const sessionConfig = generateSessionFromBuilder(data, goalIds, pool);
 
             // CASE A: Mindfulness/Timer Session
-            // We keep this deterministic because it generates complex "phases" and "mindfulConfig" 
-            // that the current LLM schema doesn't support well yet.
             if (sessionConfig.type === 'timer') {
                 const timerProps = sessionConfig.props as any;
                 const uiComponent: UIComponentData = {
@@ -155,22 +159,40 @@ export const createActionHandlers = (options: ActionHandlersOptions, timerActivi
                 return;
             }
 
-            // CASE B: Physical Workout
-            // We discard the deterministic config and ask Gemini to generate it.
-            // This leverages the "Context-Aware" prompt and the 800+ exercise database we injected.
+            // CASE B: Physical Workout — use generator output; sync workout state for live guidance and completion
+            const workoutProps = sessionConfig.props as { title: string; exercises: Array<{ name: string; reps?: string; duration?: string; restAfter?: number }> };
+            const title = workoutProps.title || 'Workout';
+            const exercises = workoutProps.exercises || [];
 
-            // Format the builder params into a natural language request
-            const params = Object.entries(data)
-                .map(([key, value]) => `${key}: ${value}`)
-                .join(', ');
+            const uiComponent: UIComponentData = {
+                type: 'workoutList',
+                props: {
+                    title,
+                    exercises,
+                    goalType: sessionConfig.goalType,
+                    goalIds: goalIds.length > 0 ? goalIds : undefined
+                }
+            };
 
-            // Create a pseudo-user message that describes the intent clearly
-            // We don't just send the raw params, we make it sound conversational 
-            // so the LLM responds naturally.
-            const prompt = `Generate a ${data.type || 'fitness'} workout with the following preferences: ${params}. Ensure it uses exercises from your supported database.`;
+            const sessionMsg: Message = {
+                id: uuidv4(),
+                role: MessageRole.MODEL,
+                text: "I've set up your workout. Ready to begin?",
+                timestamp: Date.now(),
+                uiComponent
+            };
 
-            // Use handleSendMessage to trigger the full AI flow (Model -> renderUI -> WorkoutList)
-            await handleSendMessage(prompt);
+            setMessages((prev: Message[]) => [...prev, sessionMsg]);
+            setLastGeneratedWorkout({
+                title,
+                exerciseCount: exercises.length,
+                generatedAt: Date.now()
+            });
+            setCurrentWorkoutProgress({
+                title,
+                exercises: exercises.map((e: { name: string }) => ({ name: e.name, completed: false })),
+                startedAt: Date.now()
+            });
         },
 
         [ACTIONS.TIMER_STATE_CHANGE]: (data: any) => {

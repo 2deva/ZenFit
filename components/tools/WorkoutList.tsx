@@ -145,6 +145,7 @@ const extractDurationInfo = (exercise: Exercise): { duration: number; cleanName:
 
 import { getWorkoutProgress, setWorkoutProgress } from '../../services/storageService';
 import { syncWorkoutProgressFromCloud, syncWorkoutProgressToCloud } from '../../services/persistenceService';
+import { supabase, isSupabaseConfigured } from '../../supabaseConfig';
 
 import { useAppContext } from '../../contexts/AppContext';
 
@@ -316,8 +317,12 @@ export const WorkoutList: React.FC<WorkoutListProps> = ({
         if (!workoutId || !userId || isLiveMode) return; // Skip if Live Mode (controlled by props)
 
         getLocalState(workoutId, userId).then(cloudState => {
-            // Only update if different from current state (avoid unnecessary updates)
-            if (cloudState.completed.length > completed.length || cloudState.activeIdx !== activeIdx) {
+            // Use cloud state as source of truth - it reflects the latest across all devices
+            // Check if cloud state differs from current (handles both additions and deletions)
+            const completedChanged = JSON.stringify(cloudState.completed.sort()) !== JSON.stringify(completed.sort());
+            const activeIdxChanged = cloudState.activeIdx !== activeIdx;
+            
+            if (completedChanged || activeIdxChanged) {
                 setCompleted(cloudState.completed);
                 setActiveIdx(cloudState.activeIdx);
                 if (cloudState.activeTimerState) {
@@ -329,6 +334,53 @@ export const WorkoutList: React.FC<WorkoutListProps> = ({
             console.warn('Failed to load workout state from cloud:', e);
         });
     }, [workoutId, userId]); // Only run on mount or when workoutId/userId changes
+
+    // Real-time subscription for cross-device workout progress sync
+    useEffect(() => {
+        if (!workoutId || !userId || isLiveMode) return;
+        if (!isSupabaseConfigured) return;
+
+        const channel = supabase
+            .channel(`workout_progress:${userId}:${workoutId}`)
+            .on('postgres_changes', {
+                event: '*', // Listen to INSERT, UPDATE, DELETE
+                schema: 'public',
+                table: 'workout_progress',
+                filter: `user_id=eq.${userId} AND workout_id=eq.${workoutId}`
+            }, async (payload: any) => {
+                if (payload.eventType === 'DELETE') {
+                    // Workout progress was deleted - reset to empty state
+                    setCompleted([]);
+                    setActiveIdx(0);
+                } else if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+                    // Workout progress was updated - sync the new state
+                    const newData = payload.new;
+                    const cloudCompleted = newData.completed_indices || [];
+                    const cloudActiveIdx = newData.active_idx ?? 0;
+                    
+                    // Always update from cloud (it's the source of truth)
+                    // Use functional updates to avoid stale closure issues
+                    setCompleted(prev => {
+                        const prevSorted = [...prev].sort();
+                        const cloudSorted = [...cloudCompleted].sort();
+                        if (JSON.stringify(prevSorted) !== JSON.stringify(cloudSorted)) {
+                            return cloudCompleted;
+                        }
+                        return prev;
+                    });
+                    setActiveIdx(prev => prev !== cloudActiveIdx ? cloudActiveIdx : prev);
+                }
+            })
+            .subscribe((status, err) => {
+                if (err) {
+                    console.error('Workout progress realtime subscription error:', err);
+                }
+            });
+
+        return () => {
+            supabase.removeChannel(channel).catch(console.error);
+        };
+    }, [workoutId, userId, isLiveMode]);
     const [isGuidanceExpanded, setIsGuidanceExpanded] = useState(true);
 
     // Rest period tracking

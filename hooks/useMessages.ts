@@ -70,6 +70,12 @@ export const useMessages = ({ supabaseUserId }: UseMessagesOptions): UseMessages
                 filter: `user_id=eq.${supabaseUserId}`
             }, (payload: any) => {
                 const newRecord = payload.new;
+                
+                // Skip guidance messages from real-time sync - they're local-only
+                if (newRecord.message_context === 'workout_guidance') {
+                    return;
+                }
+
                 savedMessageIdsRef.current.add(newRecord.message_id);
 
                 setMessages(prev => {
@@ -110,12 +116,18 @@ export const useMessages = ({ supabaseUserId }: UseMessagesOptions): UseMessages
                 setLocalMessages(messages);
 
                 // Save to Supabase (via Sync Queue) if authenticated
+                // IMPORTANT: Guidance messages are local-only and should NOT sync to Supabase
                 if (supabaseUserId) {
                     const latestMessage = messages[messages.length - 1];
                     if (!savedMessageIdsRef.current.has(latestMessage.id)) {
-                        // Offline-First: Schedule operation
-                        // Note: import syncService from ../services/syncService
-                        // const { syncService } = await import('../services/syncService'); // Using static import
+                        // Skip syncing guidance messages - they're ephemeral and local-only
+                        if (latestMessage.messageContext === 'workout_guidance') {
+                            // Mark as saved locally but don't sync to cloud
+                            savedMessageIdsRef.current.add(latestMessage.id);
+                            return;
+                        }
+
+                        // Offline-First: Schedule operation for non-guidance messages
                         syncService.scheduleOperation('SAVE_MESSAGE', {
                             userId: supabaseUserId,
                             message: {
@@ -149,17 +161,21 @@ export const useMessages = ({ supabaseUserId }: UseMessagesOptions): UseMessages
 
         try {
             const records = await getSupabaseMessages(supabaseUserId);
-            const formattedMessages: Message[] = records.reverse().map((r: MessageRecord & any) => ({
-                id: r.message_id,
-                role: r.role as MessageRole,
-                text: r.text,
-                timestamp: r.timestamp,
-                uiComponent: r.ui_component,
-                groundingChunks: r.grounding_chunks,
-                // Optional fields (may not exist in all deployments)
-                messageContext: r.message_context,
-                relatedWorkoutId: r.related_workout_id
-            }));
+            // Filter out guidance messages from cloud - they're local-only ephemeral messages
+            const formattedMessages: Message[] = records
+                .filter((r: MessageRecord & any) => r.message_context !== 'workout_guidance')
+                .reverse()
+                .map((r: MessageRecord & any) => ({
+                    id: r.message_id,
+                    role: r.role as MessageRole,
+                    text: r.text,
+                    timestamp: r.timestamp,
+                    uiComponent: r.ui_component,
+                    groundingChunks: r.grounding_chunks,
+                    // Optional fields (may not exist in all deployments)
+                    messageContext: r.message_context,
+                    relatedWorkoutId: r.related_workout_id
+                }));
 
             formattedMessages.forEach(m => savedMessageIdsRef.current.add(m.id));
 
@@ -198,6 +214,11 @@ export const useMessages = ({ supabaseUserId }: UseMessagesOptions): UseMessages
         if (!supabaseUserId) return;
 
         for (const msg of localMessages) {
+            // Skip guidance messages - they're local-only and shouldn't sync
+            if (msg.messageContext === 'workout_guidance') {
+                continue;
+            }
+
             if (!savedMessageIdsRef.current.has(msg.id)) {
                 await saveMessage(supabaseUserId, {
                     id: msg.id,
