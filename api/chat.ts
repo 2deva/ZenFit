@@ -3,9 +3,114 @@
  * Requires env: GEMINI_API_KEY.
  */
 
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type, type FunctionDeclaration } from "@google/genai";
 import { trackGemini } from "opik-gemini";
-import { runChatWithClient } from "../services/geminiService.js";
+
+// Keep this file self-contained for Vercel Functions.
+// Root cause fixed: avoid cross-folder imports that Vercel bundling may omit.
+const MODEL_CHAT = "gemini-2.5-flash";
+
+const renderUIFunction: FunctionDeclaration = {
+  name: "renderUI",
+  description:
+    "Renders an interactive UI component. WARNING: Do NOT use this for greetings. Only use when specifically needed by the conversation flow.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      type: {
+        type: Type.STRING,
+        description: "The type of UI component to render.",
+        enum: [
+          "goalSelector",
+          "timer",
+          "chart",
+          "map",
+          "dashboard",
+          "workoutList",
+          "workoutBuilder",
+          "streakTimeline",
+          "habitHeatmap",
+          "achievementBadge",
+        ],
+      },
+      props: { type: Type.OBJECT, description: "Component props JSON." },
+    },
+    required: ["type", "props"],
+  },
+};
+
+const calendarFunction: FunctionDeclaration = {
+  name: "createCalendarEvent",
+  description:
+    "Creates an event on the user's Google Calendar. Use this when the user wants to schedule a workout, reminder, or any time-based activity.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      title: { type: Type.STRING, description: 'Event title (e.g., "Morning Workout")' },
+      scheduledTime: { type: Type.STRING, description: 'ISO 8601 start datetime (e.g., "2026-02-02T16:30:00")' },
+      durationMinutes: { type: Type.NUMBER, description: "Duration in minutes (default 30)" },
+      description: { type: Type.STRING, description: "Optional event description" },
+    },
+    required: ["title", "scheduledTime"],
+  },
+};
+
+const getEventsFunction: FunctionDeclaration = {
+  name: "getUpcomingEvents",
+  description:
+    "Retrieves upcoming events from the user's Google Calendar. Use this when the user asks about their schedule or free time.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      maxResults: { type: Type.NUMBER, description: "Maximum number of events to return (default 5)" },
+    },
+  },
+};
+
+async function runChatWithClient(
+  client: { models: { generateContent: (opts: any) => Promise<any> } },
+  history: Array<{ role: "user" | "model"; text: string }>,
+  text: string,
+  systemInstruction: string
+): Promise<{ text?: string; uiComponent?: any; groundingChunks?: unknown[]; functionCalls?: { name: string; args: any }[] }> {
+  const contents = history.map((msg) => ({
+    role: msg.role,
+    parts: [{ text: msg.text }],
+  }));
+  contents.push({ role: "user", parts: [{ text }] });
+
+  const response = await client.models.generateContent({
+    model: MODEL_CHAT,
+    contents,
+    config: {
+      systemInstruction,
+      tools: [{ functionDeclarations: [renderUIFunction, calendarFunction, getEventsFunction] }],
+    },
+  });
+
+  const candidate = response.candidates?.[0];
+  const modelParts = candidate?.content?.parts || [];
+
+  let responseText = "";
+  const functionCalls: { name: string; args: any }[] = [];
+  let uiComponent: any | undefined;
+
+  for (const part of modelParts) {
+    if (part.text) responseText += part.text;
+    if (part.functionCall) {
+      const fc = part.functionCall;
+      if (fc.name === "renderUI") {
+        const args = fc.args as any;
+        if (args?.type && args?.props) uiComponent = { type: args.type, props: args.props };
+      } else {
+        functionCalls.push({ name: fc.name, args: fc.args as any });
+      }
+    }
+  }
+
+  const groundingChunks = candidate?.groundingMetadata?.groundingChunks || [];
+  return { text: responseText, uiComponent, groundingChunks: groundingChunks as any[], functionCalls };
+}
 
 export const config = { maxDuration: 60 };
 
@@ -48,8 +153,6 @@ export default async function handler(req: { method?: string; body?: unknown }, 
     const history = messages.map((m: { role: string; text: string }) => ({
       role: m.role as "user" | "model",
       text: m.text,
-      id: "",
-      timestamp: 0,
     }));
 
     const result = await runChatWithClient(client, history as any, newMessage, systemInstruction);
