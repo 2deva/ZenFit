@@ -10,6 +10,9 @@ export default defineConfig(({ mode }) => {
       proxy: {
         '/api': 'http://localhost:3001',
       },
+      headers: {
+        'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
+      },
     },
     plugins: [react()],
     define: {

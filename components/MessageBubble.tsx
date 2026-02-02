@@ -12,6 +12,8 @@ import { WorkoutBuilder } from './tools/WorkoutBuilder';
 import { StreakTimeline } from './tools/StreakTimeline';
 import { HabitHeatmap } from './tools/HabitHeatmap';
 import { AchievementBadge } from './tools/AchievementBadge';
+import { CalendarWidget } from './tools/CalendarWidget';
+import { CalendarEventAdded } from './tools/CalendarEventAdded';
 import { MapPin, ArrowUpRight, Sparkles } from 'lucide-react';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ACTIONS } from '../constants/app';
@@ -157,6 +159,12 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
               return <HabitHeatmap {...component.props} />;
             case 'achievementBadge':
               return <AchievementBadge {...component.props} />;
+            case 'calendar':
+              return <CalendarWidget events={component.props?.events ?? []} title={component.props?.title} emptyMessage={component.props?.emptyMessage} />;
+            case 'calendarEventAdded':
+              return component.props?.title && component.props?.scheduledAt
+                ? <CalendarEventAdded title={component.props.title} scheduledAt={component.props.scheduledAt} />
+                : null;
             default:
               return null;
           }

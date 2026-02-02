@@ -380,14 +380,16 @@ export const Timer: React.FC<TimerProps> = ({
               </Button>
             )}
 
-            <Button
-              variant="secondary"
-              size="icon"
-              onClick={reset}
-              className="h-11 w-11 sm:h-14 sm:w-14 rounded-xl sm:rounded-2xl"
-            >
-              <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5" />
-            </Button>
+            {!shouldShowComplete && (
+              <Button
+                variant="secondary"
+                size="icon"
+                onClick={reset}
+                className="h-11 w-11 sm:h-14 sm:w-14 rounded-xl sm:rounded-2xl"
+              >
+                <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5" />
+              </Button>
+            )}
           </div>
         </div>
       </div>

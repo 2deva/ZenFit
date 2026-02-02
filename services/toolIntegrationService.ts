@@ -522,7 +522,8 @@ export function generateDashboardProps(fitnessStats: {
 }
 
 /**
- * Check if user should see progress visualization based on their activity
+ * Check if user should see progress visualization based on their activity.
+ * Do not use for user-initiated "show my progress" / "how am I doing"; always show chart with empty state for those.
  */
 export async function shouldShowProgressVisualization(
   userId: string,

@@ -26,14 +26,15 @@ async function handleChat(body: {
   const opikProject = process.env.OPIK_PROJECT_NAME || "zenfit";
 
   if (!apiKey) return { status: 500, json: { error: "GEMINI_API_KEY not set" } };
-  if (!opikKey) return { status: 500, json: { error: "OPIK_API_KEY not set" } };
 
   const genAI = new GoogleGenAI({ apiKey });
-  const tracked = trackGemini(genAI, {
-    projectName: opikProject,
-    traceMetadata: { tags: ["zenfit", "gemini"], component: "zenfit-app" },
-    generationName: "Zenfit",
-  });
+  const client = opikKey
+    ? trackGemini(genAI, {
+        projectName: opikProject,
+        traceMetadata: { tags: ["zenfit", "gemini"], component: "zenfit-app" },
+        generationName: "Zenfit",
+      })
+    : genAI;
 
   const history = (messages as { role: string; text: string }[]).map((m) => ({
     role: m.role as "user" | "model",
@@ -42,8 +43,16 @@ async function handleChat(body: {
     timestamp: 0,
   }));
 
-  const result = await runChatWithClient(tracked, history as any, newMessage, systemInstruction);
-  await (tracked as any).flush?.();
+  const result = await runChatWithClient(client, history as any, newMessage, systemInstruction);
+
+  if (opikKey && typeof (client as any).flush === "function") {
+    try {
+      await (client as any).flush();
+    } catch (flushErr) {
+      console.warn("Opik flush failed (trace not sent):", flushErr);
+    }
+  }
+
   return { status: 200, json: result };
 }
 

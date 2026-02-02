@@ -98,6 +98,10 @@ const fetchGoogleFitData = async (token: string): Promise<FitnessStats> => {
     })
   });
 
+  if (response.status === 403) {
+    console.warn('Fitness API 403: access denied. Enable Fitness API in Cloud Console and ensure OAuth scopes include fitness.activity.read.');
+    return getSimulatedStats();
+  }
   if (!response.ok) {
     throw new Error('Failed to fetch from Google Fit');
   }

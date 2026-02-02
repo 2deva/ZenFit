@@ -58,6 +58,10 @@ export const getUpcomingEvents = async (maxResults = 10): Promise<CalendarEvent[
             }
         );
 
+        if (response.status === 403) {
+            console.warn('Calendar API 403: access denied. Enable Google Calendar API in Cloud Console and ensure OAuth scopes include calendar.');
+            return [];
+        }
         if (!response.ok) {
             throw new Error(`Calendar API error: ${response.status}`);
         }
@@ -65,7 +69,7 @@ export const getUpcomingEvents = async (maxResults = 10): Promise<CalendarEvent[
         const data = await response.json();
         return data.items || [];
     } catch (e) {
-        console.error('Failed to fetch calendar events:', e);
+        console.warn('Calendar fetch failed:', (e as Error).message);
         return [];
     }
 };
@@ -229,22 +233,53 @@ export const formatTimeSlot = (slot: TimeSlot): string => {
 };
 
 /**
- * Get calendar context for Gemini injection
+ * Free slots and next-window summary for nudge context (stick-to-goals).
+ * Used to inject "Free today" and "Next free window" into system instruction.
+ */
+export const getFreeSlotsContext = async (): Promise<{ freeSlotsSummary: string; nextFreeWindow: string }> => {
+    if (!getAccessToken()) return { freeSlotsSummary: '', nextFreeWindow: '' };
+
+    try {
+        const today = new Date();
+        const slots = await findFreeTimeSlots(today);
+        const freeSlotsSummary = slots.length > 0
+            ? slots.map(s => formatTimeSlot(s)).join(', ')
+            : 'No free slots of 30 min or more today.';
+
+        let nextFreeWindow = '';
+        const now = today.getTime();
+        const firstUpcoming = slots.find(s => s.end.getTime() > now);
+        if (firstUpcoming) {
+            nextFreeWindow = formatTimeSlot(firstUpcoming);
+        }
+
+        return { freeSlotsSummary, nextFreeWindow };
+    } catch {
+        return { freeSlotsSummary: '', nextFreeWindow: '' };
+    }
+};
+
+/**
+ * Get calendar context for Gemini injection.
+ * Distinguishes not-connected from connected-but-no-events so the model can reply appropriately.
  */
 export const getCalendarContext = async (): Promise<string> => {
-    const events = await getUpcomingEvents(5);
-
-    if (events.length === 0) {
-        return 'Calendar: No upcoming events or calendar not connected.';
+    const token = getAccessToken();
+    if (!token) {
+        return 'Calendar: Not connected. The user has not signed in with Google or calendar access is missing. Suggest signing in with Google to view and add calendar events.';
     }
 
-    let context = 'Upcoming Calendar Events:\n';
+    const events = await getUpcomingEvents(5);
+    if (events.length === 0) {
+        return 'Calendar: Connected. No upcoming events in the next 7 days. The user is free to schedule workouts.';
+    }
+
+    let context = 'Calendar: Connected. Upcoming events:\n';
     events.forEach(event => {
         const startTime = event.start.dateTime
             ? new Date(event.start.dateTime).toLocaleString()
             : event.start.date || 'All day';
         context += `- ${event.summary} at ${startTime}\n`;
     });
-
     return context;
 };

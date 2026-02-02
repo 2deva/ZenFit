@@ -3,11 +3,11 @@ import { useAuth } from './AuthContext';
 import { Message, MessageRole, UserProfile, FitnessStats, UIComponentData, LifeContext } from '../types';
 import { useMessages } from '../hooks/useMessages';
 import { useActivityState, ActivitySession, ActivityTimer, ActivityEvent, ActivityIntent, ActivityPhase } from '../hooks/useActivityState';
-import { extractOnboardingContext, recordInteraction, getOnboardingState, deleteAllMessages, OnboardingState } from '../services/supabaseService';
+import { extractOnboardingContext, recordInteraction, getOnboardingState, deleteAllMessages, OnboardingState, createScheduledEvent } from '../services/supabaseService';
 import { getFullUserContext, UserMemoryContext, buildLifeContext } from '../services/userContextService';
 import { sendMessageToGemini, buildSystemInstruction } from '../services/geminiService';
 import { extractAndStoreSummary } from '../services/embeddingService';
-import { createCalendarEvent } from '../services/calendarService';
+import { createCalendarEvent, getCalendarContext, getFreeSlotsContext, getUpcomingEvents } from '../services/calendarService';
 import { createActionHandlers, handleAction } from '../handlers/actionHandlers';
 import { clearAllStorage } from '../services/storageService';
 import { buildUserContext } from '../utils/contextBuilder';
@@ -318,7 +318,15 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
 
         let response: { text?: string; uiComponent?: UIComponentData; groundingChunks?: unknown[]; functionCalls?: { name: string; args: unknown }[] };
         try {
-            const systemInstruction = await buildSystemInstruction(context);
+            let systemInstruction = await buildSystemInstruction(context);
+            const calendarContext = await getCalendarContext();
+            systemInstruction += '\n\n[GOOGLE CALENDAR]\n' + calendarContext + '\nINSTRUCTION: When the user asks about their calendar, schedule, or free time, use the events above to answer. Do not call getUpcomingEvents when this context is present; answer from it.';
+            const { freeSlotsSummary, nextFreeWindow } = await getFreeSlotsContext();
+            if (freeSlotsSummary || nextFreeWindow) {
+                systemInstruction += '\n\n[FREE TIME TODAY]\nFree today: ' + (freeSlotsSummary || 'Not available.');
+                if (nextFreeWindow) systemInstruction += '\nNext free window today: ' + nextFreeWindow;
+                systemInstruction += '\nINSTRUCTION: When suggesting a time for a workout, prefer these slots when present. For proactive nudges (e.g. no movement today), use the next free window when relevant.';
+            }
             const apiRes = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -355,8 +363,32 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
         if (response.functionCalls) {
             for (const call of response.functionCalls) {
                 if (call.name === 'createCalendarEvent') {
-                    await createCalendarEvent(call.args as Parameters<typeof createCalendarEvent>[0]);
-                    modelMsg.text += TEXT.CALENDAR_EVENT_CONFIRMATION;
+                    const args = call.args as { title?: string; scheduledTime?: string; durationMinutes?: number; description?: string };
+                    const start = args.scheduledTime ? new Date(args.scheduledTime) : new Date();
+                    const created = await createCalendarEvent({
+                        summary: args.title ?? 'Workout',
+                        start,
+                        durationMinutes: args.durationMinutes ?? 30,
+                        description: args.description
+                    });
+                    if (created) {
+                        modelMsg.uiComponent = { type: 'calendarEventAdded', props: { title: created.summary, scheduledAt: start.toISOString() } } as UIComponentData;
+                        if (!modelMsg.text.trim()) modelMsg.text = 'Done.';
+                    }
+                    if (created && supabaseUserId) {
+                        createScheduledEvent(supabaseUserId, {
+                            eventType: 'workout',
+                            title: created.summary,
+                            scheduledAt: start.toISOString(),
+                            googleEventId: created.id
+                        }).catch(console.error);
+                    }
+                }
+                else if (call.name === 'getUpcomingEvents') {
+                    const args = call.args as { maxResults?: number } | undefined;
+                    const events = await getUpcomingEvents(args?.maxResults ?? 5);
+                    modelMsg.uiComponent = { type: 'calendar', props: { events } } as UIComponentData;
+                    if (!modelMsg.text.trim()) modelMsg.text = "Here's what's on your calendar.";
                 }
             }
         }

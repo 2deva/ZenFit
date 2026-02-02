@@ -18,7 +18,7 @@ export interface GroundingChunk {
 }
 
 export interface UIComponentData {
-  type: 'goalSelector' | 'timer' | 'chart' | 'map' | 'dashboard' | 'workoutList' | 'workoutBuilder' | 'streakTimeline' | 'habitHeatmap' | 'achievementBadge';
+  type: 'goalSelector' | 'timer' | 'chart' | 'map' | 'dashboard' | 'workoutList' | 'workoutBuilder' | 'streakTimeline' | 'habitHeatmap' | 'achievementBadge' | 'calendar' | 'calendarEventAdded';
   props: any;
   voiceOptions?: SelectionOption[]; // Add voice options directly to base interface for easier consumption
 }

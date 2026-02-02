@@ -115,6 +115,9 @@ Fitness happens everywhere—often where Wi-Fi is weak. Zenfit's `SyncService` e
     VITE_SUPABASE_URL=your_url
     VITE_SUPABASE_ANON_KEY=your_key
     VITE_FIREBASE_API_KEY=your_firebase_key
+    OPIK_API_KEY=your_key
+    OPIK_PROJECT_NAME=your_project_name
+    OPIK_WORKSPACE=your_workspace_name
     ...
     ```
 
@@ -129,3 +132,34 @@ Zenfit is "Vercel-Ready".
 2.  Add environment variables.
 3.  Deploy.
 
+---
+
+## 📊 Opik integration (Evaluation & observability)
+
+ZenFit uses [Opik](https://www.comet.com/docs/opik) for **tracing**, **evaluation**, and **prompt optimization** so we can measure and improve agent behavior systematically.
+
+### What we trace
+* **Chat**: Every request through `/api/chat` (Vercel serverless or local dev API) is traced via `opik-gemini` (Node-only). Tool calls (renderUI, calendar, getEvents) and Gemini responses are captured.
+* **Where**: Production → Vercel `/api/chat`; local → `npm run dev` + `npm run dev:api` with Vite proxying `/api` to the API server.
+
+### What we evaluate
+We run a **15–20 scenario eval** and log one **Opik experiment** with deterministic scores:
+* **action_first**: Response includes a concrete action (timer, workoutList, workoutBuilder, chart) or renderUI.
+* **tool_correctness**: Valid renderUI props (e.g. timer duration in seconds).
+* **safety**: No medical/danger language; injury-like inputs get a provider/doctor/care mention.
+* **friction**: Low-energy prompts (“I’m tired”) get short sessions (e.g. timer ≤ 10 min).
+
+### How to run the eval
+```bash
+# Env: GEMINI_API_KEY (or API_KEY), OPIK_API_KEY, OPIK_PROJECT_NAME, OPIK_WORKSPACE (if required)
+npm run eval:opik
+```
+Results appear under **Evaluation → Experiments** in the Opik dashboard.
+
+### Agent Optimizer
+We use the **Opik Agent Optimizer** (MetaPrompt) to improve the Zen system prompt:
+* **Dataset**: Same 15–20 scenarios (or call deployed `/api/chat` from Python).
+* **Metric**: Composite (action_first + safety + relevance).
+* **Run**: `scripts/opik-optimizer/run_optimizer.py` (Python 3.10+, `pip install -r scripts/opik-optimizer/requirements.txt`, then `opik configure`).
+
+Results appear under **Evaluation → Optimization runs** in the Opik dashboard.

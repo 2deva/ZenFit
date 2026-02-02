@@ -1,6 +1,6 @@
 /**
- * Vercel serverless API: chat with Gemini and send traces to Opik (Node-only SDK).
- * Requires env: GEMINI_API_KEY, OPIK_API_KEY, OPIK_PROJECT_NAME (e.g. zenfit).
+ * Vercel serverless API: chat with Gemini. Opik tracing optional (set OPIK_API_KEY to enable).
+ * Requires env: GEMINI_API_KEY.
  */
 
 import { GoogleGenAI } from "@google/genai";
@@ -22,9 +22,6 @@ export default async function handler(req: { method?: string; body?: unknown }, 
   if (!apiKey) {
     return res.status(500).json({ error: "GEMINI_API_KEY not set" });
   }
-  if (!opikKey) {
-    return res.status(500).json({ error: "OPIK_API_KEY not set (required for /api/chat)" });
-  }
 
   let body: { messages?: { role: string; text: string }[]; newMessage?: string; systemInstruction?: string };
   try {
@@ -40,11 +37,13 @@ export default async function handler(req: { method?: string; body?: unknown }, 
 
   try {
     const genAI = new GoogleGenAI({ apiKey });
-    const tracked = trackGemini(genAI, {
-      projectName: opikProject,
-      traceMetadata: { tags: ["zenfit", "gemini"], component: "zenfit-app" },
-      generationName: "Zenfit",
-    });
+    const client = opikKey
+      ? trackGemini(genAI, {
+          projectName: opikProject,
+          traceMetadata: { tags: ["zenfit", "gemini"], component: "zenfit-app" },
+          generationName: "Zenfit",
+        })
+      : genAI;
 
     const history = messages.map((m: { role: string; text: string }) => ({
       role: m.role as "user" | "model",
@@ -53,8 +52,15 @@ export default async function handler(req: { method?: string; body?: unknown }, 
       timestamp: 0,
     }));
 
-    const result = await runChatWithClient(tracked, history as any, newMessage, systemInstruction);
-    await (tracked as any).flush?.();
+    const result = await runChatWithClient(client, history as any, newMessage, systemInstruction);
+
+    if (opikKey && typeof (client as any).flush === "function") {
+      try {
+        await (client as any).flush();
+      } catch (flushErr) {
+        console.warn("Opik flush failed (trace not sent):", flushErr);
+      }
+    }
 
     res.setHeader("Content-Type", "application/json");
     return res.status(200).json(result);

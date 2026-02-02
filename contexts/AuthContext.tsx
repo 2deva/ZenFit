@@ -1,12 +1,14 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import {
     User,
+    GoogleAuthProvider,
     signInWithPopup,
     signOut as firebaseSignOut,
     onAuthStateChanged,
     getAdditionalUserInfo
 } from 'firebase/auth';
 import { auth, googleProvider } from '../firebaseConfig';
+import { STORAGE_KEYS } from '../constants/app';
 
 interface AuthContextType {
     user: User | null;
@@ -68,13 +70,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             const additionalInfo = getAdditionalUserInfo(result);
             setIsNewUser(additionalInfo?.isNewUser ?? false);
 
-            // Get OAuth access token for Google APIs
-            // @ts-ignore - credential type includes accessToken
-            const credential = result.credential;
-            if (credential) {
-                // Store the OAuth access token for Calendar/Fit APIs
-                // Note: This is different from Firebase ID token
-                localStorage.setItem('google_oauth_token', (credential as any).accessToken || '');
+            // OAuth access token for Google APIs (Calendar, Fit). In Firebase v9 modular,
+            // UserCredential has no .credential; use GoogleAuthProvider.credentialFromResult().
+            const credential = GoogleAuthProvider.credentialFromResult(result);
+            if (credential?.accessToken) {
+                localStorage.setItem(STORAGE_KEYS.FITNESS_TOKEN, credential.accessToken);
             }
 
         } catch (error: any) {
@@ -102,7 +102,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const signOut = async () => {
         try {
             await firebaseSignOut(auth);
-            localStorage.removeItem('google_oauth_token');
+            localStorage.removeItem(STORAGE_KEYS.FITNESS_TOKEN);
             setIsNewUser(false);
         } catch (error) {
             console.error('Sign out failed:', error);

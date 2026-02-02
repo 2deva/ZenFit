@@ -33,6 +33,7 @@ import { processToolInterceptors } from '../services/toolMiddleware';
 import { normalizeTimerProps } from '../utils/timerProps';
 
 import { createCalendarEvent, getUpcomingEvents } from '../services/calendarService';
+import { createScheduledEvent } from '../services/supabaseService';
 
 // Import new services
 import {
@@ -2104,12 +2105,21 @@ export const useLiveSession = ({
                     // Handle Calendar: Create Event
                     else if (fc.name === 'createCalendarEvent') {
                       const args = fc.args as any;
+                      const start = new Date(args.scheduledTime);
                       createCalendarEvent({
                         summary: args.title,
-                        start: new Date(args.scheduledTime),
+                        start,
                         durationMinutes: args.durationMinutes || 30,
                         description: args.description
                       }).then(result => {
+                        if (result && userId) {
+                          createScheduledEvent(userId, {
+                            eventType: 'workout',
+                            title: result.summary,
+                            scheduledAt: start.toISOString(),
+                            googleEventId: result.id
+                          }).catch(console.error);
+                        }
                         sessionPromise.then(sess => {
                           if (isConnectedRef.current) {
                             sess.sendToolResponse({

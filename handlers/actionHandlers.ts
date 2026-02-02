@@ -318,6 +318,7 @@ export const createActionHandlers = (options: ActionHandlersOptions, timerActivi
                 const cooldownTimerProps = {
                      duration: cooldownDuration * 60,
                      label: cooldownLabel,
+                     goalType: 'breathing',
                      meta: {
                         mindfulConfig: {
                             intent: 'breathing_reset',
@@ -523,6 +524,7 @@ export const createActionHandlers = (options: ActionHandlersOptions, timerActivi
             const cooldownTimerProps = {
                 duration: cooldownDuration * 60,
                 label: cooldownLabel,
+                goalType: 'breathing',
                 meta: {
                     mindfulConfig: {
                         intent: 'breathing_reset',
