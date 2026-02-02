@@ -50,7 +50,7 @@ export const GlobalEffects: React.FC = () => {
             const stats = await getFitnessData();
             if (supabaseUserId) {
                 const stepGoal = await getStepGoalForUser(supabaseUserId);
-                setFitnessStats({ ...stats, stepGoal });
+                setFitnessStats({ ...stats, stepsGoal: stepGoal });
             } else {
                 setFitnessStats(stats);
             }

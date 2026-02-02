@@ -1,5 +1,5 @@
-import { verifyFirebaseToken } from '../../_lib/verifyFirebaseToken';
-import { getGoogleAccessToken } from '../../_lib/googleAuthService';
+import { verifyFirebaseToken } from '../../_lib/verifyFirebaseToken.js';
+import { getGoogleAccessToken } from '../../_lib/googleAuthService.js';
 
 const CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3';
 

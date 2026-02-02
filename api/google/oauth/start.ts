@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { verifyFirebaseToken } from '../../_lib/verifyFirebaseToken';
+import { verifyFirebaseToken } from '../../_lib/verifyFirebaseToken.js';
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_OAUTH_REDIRECT_URI = process.env.GOOGLE_OAUTH_REDIRECT_URI;
