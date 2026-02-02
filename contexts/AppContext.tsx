@@ -118,7 +118,7 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export function AppContextProvider({ children }: { children: ReactNode }) {
-    const { user } = useAuth();
+    const { user, accessToken } = useAuth();
 
     // --- Core State ---
     const [supabaseUserId, setSupabaseUserId] = useState<string | null>(null);
@@ -319,9 +319,9 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
         let response: { text?: string; uiComponent?: UIComponentData; groundingChunks?: unknown[]; functionCalls?: { name: string; args: unknown }[] };
         try {
             let systemInstruction = await buildSystemInstruction(context);
-            const calendarContext = await getCalendarContext();
+            const calendarContext = await getCalendarContext(accessToken);
             systemInstruction += '\n\n[GOOGLE CALENDAR]\n' + calendarContext + '\nINSTRUCTION: When the user asks about their calendar, schedule, or free time, use the events above to answer. Do not call getUpcomingEvents when this context is present; answer from it.';
-            const { freeSlotsSummary, nextFreeWindow } = await getFreeSlotsContext();
+            const { freeSlotsSummary, nextFreeWindow } = await getFreeSlotsContext(accessToken);
             if (freeSlotsSummary || nextFreeWindow) {
                 systemInstruction += '\n\n[FREE TIME TODAY]\nFree today: ' + (freeSlotsSummary || 'Not available.');
                 if (nextFreeWindow) systemInstruction += '\nNext free window today: ' + nextFreeWindow;
@@ -343,7 +343,7 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
                 response = { text: (errData as { text?: string }).text || "I'm having trouble connecting. Please try again." };
                 const askCalendar = content.toLowerCase().includes('calendar') || content.toLowerCase().includes('schedule');
                 if (askCalendar) {
-                    const events = await getUpcomingEvents(5);
+                    const events = await getUpcomingEvents(5, accessToken);
                     response.uiComponent = { type: 'calendar', props: { events } } as UIComponentData;
                 }
             }
@@ -376,7 +376,7 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
                         start,
                         durationMinutes: args.durationMinutes ?? 30,
                         description: args.description
-                    });
+                    }, accessToken);
                     if (created) {
                         modelMsg.uiComponent = { type: 'calendarEventAdded', props: { title: created.summary, scheduledAt: start.toISOString() } } as UIComponentData;
                         if (!modelMsg.text.trim()) modelMsg.text = 'Done.';
@@ -392,7 +392,7 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
                 }
                 else if (call.name === 'getUpcomingEvents') {
                     const args = call.args as { maxResults?: number } | undefined;
-                    const events = await getUpcomingEvents(args?.maxResults ?? 5);
+                    const events = await getUpcomingEvents(args?.maxResults ?? 5, accessToken);
                     modelMsg.uiComponent = { type: 'calendar', props: { events } } as UIComponentData;
                     if (!modelMsg.text.trim()) modelMsg.text = "Here's what's on your calendar.";
                 }

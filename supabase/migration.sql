@@ -78,6 +78,17 @@ CREATE TABLE IF NOT EXISTS scheduled_events (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Google integrations (server-side OAuth tokens for Google APIs)
+CREATE TABLE IF NOT EXISTS google_integrations (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  refresh_token TEXT NOT NULL,
+  scope TEXT,
+  calendar_enabled BOOLEAN DEFAULT true,
+  fit_enabled BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Create indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_user_goals_user_id ON user_goals(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_goals_active ON user_goals(user_id, is_active);
@@ -85,6 +96,7 @@ CREATE INDEX IF NOT EXISTS idx_workout_sessions_user_id ON workout_sessions(user
 CREATE INDEX IF NOT EXISTS idx_habit_streaks_user_id ON habit_streaks(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_memories_user_id ON user_memories(user_id);
 CREATE INDEX IF NOT EXISTS idx_scheduled_events_user_id ON scheduled_events(user_id);
+CREATE INDEX IF NOT EXISTS idx_google_integrations_user ON google_integrations(user_id);
 
 -- Create HNSW index for vector similarity search
 CREATE INDEX IF NOT EXISTS idx_user_memories_embedding ON user_memories 
@@ -126,6 +138,7 @@ ALTER TABLE workout_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE habit_streaks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_memories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE scheduled_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE google_integrations ENABLE ROW LEVEL SECURITY;
 
 -- Create policies for public access (using anon key)
 -- Note: In production, these should be more restrictive

@@ -19,6 +19,8 @@ export function ProfileDashboardModal({ isOpen, onClose }: ProfileDashboardModal
   const { user, signOut, signInWithGoogle } = useAuth();
   const { dashboardSnapshot, refreshDashboardSnapshot, lifeContext } = useAppContext();
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [calendarStatus, setCalendarStatus] = useState<'unknown' | 'connected' | 'not_connected' | 'error'>('unknown');
+  const [isConnectingCalendar, setIsConnectingCalendar] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -38,6 +40,65 @@ export function ProfileDashboardModal({ isOpen, onClose }: ProfileDashboardModal
       document.body.style.overflow = prev;
     };
   }, [isOpen]);
+
+  // Check Google Calendar connection status when modal opens and user is available.
+  useEffect(() => {
+    if (!isOpen || !user) {
+      setCalendarStatus('unknown');
+      return;
+    }
+    let cancelled = false;
+    const checkStatus = async () => {
+      try {
+        const idToken = await user.getIdToken();
+        const res = await fetch('/api/google/calendar/events?maxResults=1&range=today', {
+          headers: { Authorization: `Bearer ${idToken}` },
+        });
+        if (!res.ok) {
+          if (!cancelled) setCalendarStatus('error');
+          return;
+        }
+        const data = (await res.json()) as { connected?: boolean };
+        if (!cancelled) setCalendarStatus(data.connected ? 'connected' : 'not_connected');
+      } catch {
+        if (!cancelled) setCalendarStatus('error');
+      }
+    };
+    checkStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, user]);
+
+  const handleConnectCalendar = async () => {
+    try {
+      if (!user) {
+        await signInWithGoogle();
+        return;
+      }
+      setIsConnectingCalendar(true);
+      const idToken = await user.getIdToken();
+      const res = await fetch('/api/google/oauth/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken, provider: 'calendar' }),
+      });
+      if (!res.ok) {
+        console.error('Failed to start Google OAuth for calendar');
+        setCalendarStatus('error');
+        return;
+      }
+      const data = (await res.json()) as { url?: string };
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    } catch (err) {
+      console.error('Connect calendar failed:', err);
+      setCalendarStatus('error');
+    } finally {
+      setIsConnectingCalendar(false);
+    }
+  };
 
   const unlockedBadges = useMemo(() => {
     const unlocked = dashboardSnapshot?.achievements?.unlocked || [];
@@ -120,6 +181,33 @@ export function ProfileDashboardModal({ isOpen, onClose }: ProfileDashboardModal
                 <RefreshCw className={`w-4 h-4 flex-shrink-0 text-ink-500 ${isRefreshing ? 'animate-spin' : ''}`} />
                 <span className="hidden sm:inline">Refresh</span>
               </Button>
+
+              {user && (
+                <Button
+                  variant="secondary"
+                  className="hidden sm:inline-flex rounded-xl h-9 px-3 items-center gap-2"
+                  onClick={handleConnectCalendar}
+                  disabled={isConnectingCalendar}
+                >
+                  <span className="inline-block w-2 h-2 rounded-full mr-1"
+                    style={{
+                      backgroundColor:
+                        calendarStatus === 'connected'
+                          ? '#16a34a'
+                          : calendarStatus === 'error'
+                            ? '#dc2626'
+                            : '#d4d4d8',
+                    }}
+                  />
+                  <span className="text-xs">
+                    {calendarStatus === 'connected'
+                      ? 'Calendar connected'
+                      : calendarStatus === 'error'
+                        ? 'Calendar error'
+                        : 'Connect Calendar'}
+                  </span>
+                </Button>
+              )}
 
               <Button
                 variant="secondary"

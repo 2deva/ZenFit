@@ -15,7 +15,7 @@ import { LiveStatus } from '../types';
 import { supabase, isSupabaseConfigured } from '../supabaseConfig';
 
 export const GlobalEffects: React.FC = () => {
-    const { user } = useAuth();
+    const { user, accessToken } = useAuth();
     const {
         setSupabaseUserId,
         setUserProfile,
@@ -50,7 +50,7 @@ export const GlobalEffects: React.FC = () => {
             const stats = await getFitnessData();
             if (supabaseUserId) {
                 const stepGoal = await getStepGoalForUser(supabaseUserId);
-                setFitnessStats({ ...stats, stepsGoal });
+                setFitnessStats({ ...stats, stepGoal });
             } else {
                 setFitnessStats(stats);
             }
@@ -88,7 +88,7 @@ export const GlobalEffects: React.FC = () => {
                         oState = await createOnboardingState(supaUser.id);
                     }
                     setOnboardingState(oState);
-                    tryCalendarNudge(supaUser.id, oState).catch(() => {});
+                    tryCalendarNudge(supaUser.id, oState, accessToken).catch(() => {});
                 }
             } else {
                 setSupabaseUserId(null);

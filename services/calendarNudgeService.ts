@@ -19,10 +19,11 @@ const PREFERRED_HOUR: Record<string, number> = { morning: 7, afternoon: 13, even
  */
 export async function tryCalendarNudge(
   userId: string,
-  onboarding?: { preferredWorkoutTime?: string | null } | null
+  onboarding?: { preferredWorkoutTime?: string | null } | null,
+  idToken?: string | null
 ): Promise<void> {
   try {
-    if (!localStorage.getItem(STORAGE_KEYS.FITNESS_TOKEN)) return;
+    if (!idToken) return;
 
     const today = new Date().toISOString().split('T')[0];
     if (localStorage.getItem(STORAGE_KEYS.CALENDAR_NUDGE_DATE) === today) return;
@@ -51,7 +52,7 @@ export async function tryCalendarNudge(
       start,
       durationMinutes: NUDGE_DURATION_MINUTES,
       description: NUDGE_DESCRIPTION,
-    });
+    }, idToken);
 
     if (created) {
       localStorage.setItem(STORAGE_KEYS.CALENDAR_NUDGE_DATE, today);

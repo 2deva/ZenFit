@@ -182,6 +182,33 @@ export interface Database {
                     completed?: boolean;
                 };
             };
+            google_integrations: {
+                Row: {
+                    user_id: string;
+                    refresh_token: string;
+                    scope: string | null;
+                    calendar_enabled: boolean;
+                    fit_enabled: boolean;
+                    created_at: string;
+                    updated_at: string;
+                };
+                Insert: {
+                    user_id: string;
+                    refresh_token: string;
+                    scope?: string | null;
+                    calendar_enabled?: boolean;
+                    fit_enabled?: boolean;
+                    created_at?: string;
+                    updated_at?: string;
+                };
+                Update: {
+                    refresh_token?: string;
+                    scope?: string | null;
+                    calendar_enabled?: boolean;
+                    fit_enabled?: boolean;
+                    updated_at?: string;
+                };
+            };
         };
         Views: {};
         Functions: {

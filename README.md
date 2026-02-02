@@ -111,14 +111,26 @@ Fitness happens everywhere—often where Wi-Fi is weak. Zenfit's `SyncService` e
 1.  **Environment Setup**
     Create `.env.local`:
     ```env
-    gemini_api_key=your_key_here
+    # Core API Keys
+    GEMINI_API_KEY=your_key_here
     VITE_SUPABASE_URL=your_url
     VITE_SUPABASE_ANON_KEY=your_key
     VITE_FIREBASE_API_KEY=your_firebase_key
+    
+    # Opik (Optional - for tracing/evaluation)
     OPIK_API_KEY=your_key
     OPIK_PROJECT_NAME=your_project_name
     OPIK_WORKSPACE=your_workspace_name
-    ...
+
+    # Google Calendar integration (server-side - see .env.example for detailed setup)
+    SUPABASE_URL=your_supabase_url
+    SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+    GOOGLE_CLIENT_ID=your_google_oauth_client_id
+    GOOGLE_CLIENT_SECRET=your_google_oauth_client_secret
+    GOOGLE_OAUTH_REDIRECT_URI=https://your-app-domain.com/api/google/oauth/callback
+    GOOGLE_OAUTH_STATE_SECRET=your_long_random_state_secret
+    APP_BASE_URL=https://your-app-domain.com
+    APP_REDIRECT_AFTER_OAUTH=/
     ```
 
 2.  **Run Development Server**

@@ -17,115 +17,85 @@ export interface TimeSlot {
     available: boolean;
 }
 
-import { STORAGE_KEYS } from '../constants/app';
-
 /**
- * Get the OAuth access token from localStorage
- * Set during Firebase Google Sign-In
+ * Fetch upcoming events from the backend calendar proxy.
+ * idToken should be a Firebase ID token for the current user.
  */
-const getAccessToken = (): string | null => {
-    return localStorage.getItem(STORAGE_KEYS.FITNESS_TOKEN);
-};
-
-/**
- * Fetch upcoming events from the user's primary calendar
- */
-export const getUpcomingEvents = async (maxResults = 10): Promise<CalendarEvent[]> => {
-    const token = getAccessToken();
-    if (!token) {
-        console.warn('No OAuth token available for Calendar API');
+export const getUpcomingEvents = async (maxResults = 10, idToken?: string | null): Promise<CalendarEvent[]> => {
+    if (!idToken) {
         return [];
     }
 
     try {
-        const now = new Date().toISOString();
-        const oneWeekLater = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-
-        const response = await fetch(
-            `${CALENDAR_API_BASE}/calendars/primary/events?` +
-            new URLSearchParams({
-                timeMin: now,
-                timeMax: oneWeekLater,
-                maxResults: maxResults.toString(),
-                singleEvents: 'true',
-                orderBy: 'startTime'
-            }),
-            {
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                }
+        const res = await fetch(`/api/google/calendar/events?${new URLSearchParams({
+            maxResults: String(maxResults),
+            range: 'week'
+        }).toString()}`, {
+            headers: {
+                Authorization: `Bearer ${idToken}`
             }
-        );
+        });
 
-        if (response.status === 403) {
-            console.warn('Calendar API 403: access denied. Enable Google Calendar API in Cloud Console and ensure OAuth scopes include calendar.');
+        if (res.status === 401) {
+            // Caller is responsible for refreshing the Firebase token if needed.
             return [];
         }
-        if (!response.ok) {
-            throw new Error(`Calendar API error: ${response.status}`);
+
+        if (!res.ok) {
+            return [];
         }
 
-        const data = await response.json();
-        return data.items || [];
+        const data = (await res.json()) as { connected: boolean; events: CalendarEvent[] };
+        if (!data.connected) return [];
+        return data.events || [];
     } catch (e) {
-        console.warn('Calendar fetch failed:', (e as Error).message);
+        console.warn('Calendar fetch failed:', e);
         return [];
     }
 };
 
 /**
- * Create a new event on the user's primary calendar
+ * Create a new event via backend calendar proxy.
  */
-export const createCalendarEvent = async (event: {
-    summary: string;
-    description?: string;
-    start: Date;
-    durationMinutes: number;
-}): Promise<CalendarEvent | null> => {
-    const token = getAccessToken();
-    if (!token) {
-        console.warn('No OAuth token available for Calendar API');
+export const createCalendarEvent = async (
+    event: {
+        summary: string;
+        description?: string;
+        start: Date;
+        durationMinutes: number;
+    },
+    idToken?: string | null
+): Promise<CalendarEvent | null> => {
+    if (!idToken) {
         return null;
     }
 
     try {
-        const endTime = new Date(event.start.getTime() + event.durationMinutes * 60 * 1000);
+        const response = await fetch('/api/google/calendar/events', {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${idToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                title: event.summary,
+                description: event.description || 'Created by Zenfit',
+                startIso: event.start.toISOString(),
+                durationMinutes: event.durationMinutes
+            })
+        });
 
-        const response = await fetch(
-            `${CALENDAR_API_BASE}/calendars/primary/events`,
-            {
-                method: 'POST',
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    summary: event.summary,
-                    description: event.description || 'Created by Zenfit',
-                    start: {
-                        dateTime: event.start.toISOString(),
-                        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
-                    },
-                    end: {
-                        dateTime: endTime.toISOString(),
-                        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
-                    },
-                    reminders: {
-                        useDefault: false,
-                        overrides: [
-                            { method: 'popup', minutes: 30 }
-                        ]
-                    }
-                })
-            }
-        );
-
-        if (!response.ok) {
-            throw new Error(`Calendar API error: ${response.status}`);
+        if (response.status === 401 || response.status === 403) {
+            return null;
         }
 
-        return await response.json();
+        if (!response.ok) {
+            return null;
+        }
+
+        const data = (await response.json()) as { connected: boolean; event?: CalendarEvent };
+        if (!data.connected || !data.event) return null;
+        return data.event;
     } catch (e) {
         console.error('Failed to create calendar event:', e);
         return null;
@@ -135,8 +105,8 @@ export const createCalendarEvent = async (event: {
 /**
  * Analyze calendar to find free time slots
  */
-export const findFreeTimeSlots = async (date: Date): Promise<TimeSlot[]> => {
-    const events = await getUpcomingEvents(50);
+export const findFreeTimeSlots = async (date: Date, idToken?: string | null): Promise<TimeSlot[]> => {
+    const events = await getUpcomingEvents(50, idToken);
     if (events.length === 0) {
         // If no events or no access, return simulated free slots
         return getDefaultFreeSlots(date);
@@ -236,12 +206,12 @@ export const formatTimeSlot = (slot: TimeSlot): string => {
  * Free slots and next-window summary for nudge context (stick-to-goals).
  * Used to inject "Free today" and "Next free window" into system instruction.
  */
-export const getFreeSlotsContext = async (): Promise<{ freeSlotsSummary: string; nextFreeWindow: string }> => {
-    if (!getAccessToken()) return { freeSlotsSummary: '', nextFreeWindow: '' };
+export const getFreeSlotsContext = async (idToken?: string | null): Promise<{ freeSlotsSummary: string; nextFreeWindow: string }> => {
+    if (!idToken) return { freeSlotsSummary: '', nextFreeWindow: '' };
 
     try {
         const today = new Date();
-        const slots = await findFreeTimeSlots(today);
+        const slots = await findFreeTimeSlots(today, idToken);
         const freeSlotsSummary = slots.length > 0
             ? slots.map(s => formatTimeSlot(s)).join(', ')
             : 'No free slots of 30 min or more today.';
@@ -263,13 +233,12 @@ export const getFreeSlotsContext = async (): Promise<{ freeSlotsSummary: string;
  * Get calendar context for Gemini injection.
  * Distinguishes not-connected from connected-but-no-events so the model can reply appropriately.
  */
-export const getCalendarContext = async (): Promise<string> => {
-    const token = getAccessToken();
-    if (!token) {
-        return 'Calendar: Not connected. The user has not signed in with Google or calendar access is missing. Suggest signing in with Google to view and add calendar events.';
+export const getCalendarContext = async (idToken?: string | null): Promise<string> => {
+    if (!idToken) {
+        return 'Calendar: Not connected. The user has not signed in with Google or calendar access is missing. Suggest connecting Google Calendar in settings to view and add events.';
     }
 
-    const events = await getUpcomingEvents(5);
+    const events = await getUpcomingEvents(5, idToken);
     if (events.length === 0) {
         return 'Calendar: Connected. No upcoming events in the next 7 days. The user is free to schedule workouts.';
     }

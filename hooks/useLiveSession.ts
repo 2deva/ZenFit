@@ -33,6 +33,7 @@ import { processToolInterceptors } from '../services/toolMiddleware';
 import { normalizeTimerProps } from '../utils/timerProps';
 
 import { createCalendarEvent, getUpcomingEvents } from '../services/calendarService';
+import { useAuth } from '../contexts/AuthContext';
 import { createScheduledEvent } from '../services/supabaseService';
 
 // Import new services
@@ -164,6 +165,7 @@ export const useLiveSession = ({
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const { accessToken } = useAuth();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [connectionQuality, setConnectionQuality] = useState<'good' | 'fair' | 'poor'>('good');
 
@@ -2111,7 +2113,7 @@ export const useLiveSession = ({
                         start,
                         durationMinutes: args.durationMinutes || 30,
                         description: args.description
-                      }).then(result => {
+                      }, accessToken).then(result => {
                         if (result && userId) {
                           createScheduledEvent(userId, {
                             eventType: 'workout',
@@ -2137,7 +2139,7 @@ export const useLiveSession = ({
                     // Handle Calendar: Get Events
                     else if (fc.name === 'getUpcomingEvents') {
                       const args = fc.args as any;
-                      getUpcomingEvents(args.maxResults || 5).then(events => {
+                      getUpcomingEvents(args.maxResults || 5, accessToken).then(events => {
                         const eventList = events.map(e =>
                           `${e.summary} at ${e.start.dateTime ? new Date(e.start.dateTime).toLocaleString() : e.start.date}`
                         ).join('\n');
