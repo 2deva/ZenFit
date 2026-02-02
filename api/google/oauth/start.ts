@@ -50,7 +50,8 @@ export default async function handler(req: any, res: any) {
 
     const verified = await verifyFirebaseToken(idToken);
     if (!verified) {
-      res.status(401).json({ error: 'Invalid or unverified Firebase ID token' });
+      console.error('[oauth/start] Token verification failed. Check server logs above for details.');
+      res.status(401).json({ error: 'Invalid Firebase token or user not found in Supabase' });
       return;
     }
 

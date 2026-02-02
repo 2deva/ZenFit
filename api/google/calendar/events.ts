@@ -48,7 +48,10 @@ async function handleGet(req: any, res: any, userId: string) {
     if (!resp.ok) {
       const body = await resp.text();
       console.error('Calendar GET failed:', resp.status, body);
-      res.status(500).json({ connected: true, events: [] });
+      // For robustness in the app UI, treat backend calendar errors as "not connected"
+      // rather than surfacing a 5xx. This keeps the Profile modal and chat tools stable
+      // while still logging the underlying issue for debugging.
+      res.status(200).json({ connected: false, events: [] });
       return;
     }
 
@@ -56,7 +59,9 @@ async function handleGet(req: any, res: any, userId: string) {
     res.status(200).json({ connected: true, events: data.items || [] });
   } catch (err) {
     console.error('Calendar GET error:', err);
-    res.status(500).json({ connected: true, events: [] });
+    // Same rationale as above: hide transient backend errors from the client
+    // and surface a clean "not connected" state instead of a 500.
+    res.status(200).json({ connected: false, events: [] });
   }
 }
 
@@ -125,7 +130,8 @@ export default async function handler(req: any, res: any) {
   const idToken = authHeader.slice('Bearer '.length).trim();
   const verified = await verifyFirebaseToken(idToken);
   if (!verified) {
-    res.status(401).json({ error: 'Invalid Firebase token' });
+    console.error('[calendar/events] Token verification failed. Check server logs above for details.');
+    res.status(401).json({ error: 'Invalid Firebase token or user not found in Supabase' });
     return;
   }
 
