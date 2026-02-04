@@ -132,7 +132,7 @@ export const AppLayout: React.FC = () => {
                         </div>
                     </div>
                     <div>
-                        <h1 className="font-display text-lg sm:text-xl font-bold text-ink-900 tracking-tight">ZenFit</h1>
+                        <h1 className="font-display text-lg sm:text-xl font-bold text-ink-900 tracking-tight">ZenFit AI</h1>
                         <p className="text-[10px] sm:text-xs text-ink-400 font-medium hidden sm:block">Mindful movement</p>
                     </div>
                 </div>
