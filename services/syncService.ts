@@ -112,15 +112,17 @@ class SyncService {
         if (!navigator.onLine) return;
 
         this.isProcessing = true;
+        const processedInThisPass = new Set<string>();
 
         // Get generic Supabase client status check if needed, but onLine check is usually good first step.
         // We'll proceed optimistically.
 
         try {
-            // Filter pending items
-            const pendingOps = this.queue.filter(op => op.status === 'pending');
+            while (true) {
+                const op = this.queue.find(item => item.status === 'pending' && !processedInThisPass.has(item.id));
+                if (!op) break;
+                processedInThisPass.add(op.id);
 
-            for (const op of pendingOps) {
                 op.status = 'processing';
                 this.saveQueue(); // Persist processing state
 
@@ -144,8 +146,13 @@ class SyncService {
             console.error('Sync queue processing error:', e);
         } finally {
             this.isProcessing = false;
-            // If more items were added while processing, trigger again? 
-            // The loop handles current snapshot.
+            // Drain any operations appended after the last loop check.
+            const hasUnprocessedPending = this.queue.some(
+                op => op.status === 'pending' && !processedInThisPass.has(op.id)
+            );
+            if (navigator.onLine && hasUnprocessedPending) {
+                this.processQueue();
+            }
         }
     }
 

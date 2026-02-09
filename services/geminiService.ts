@@ -182,7 +182,7 @@ export const startGuidedActivityFunction: FunctionDeclaration = {
       activityType: {
         type: Type.STRING,
         description: 'Type of guided activity',
-        enum: ['workout', 'breathing', 'meditation', 'stretching']
+        enum: ['workout', 'breathing', 'meditation', 'stretching', 'timer']
       },
       exercises: {
         type: Type.ARRAY,
@@ -200,16 +200,74 @@ export const startGuidedActivityFunction: FunctionDeclaration = {
       breathingPattern: {
         type: Type.STRING,
         description: 'For breathing: preset pattern name',
-        enum: ['box', 'relaxing', 'energizing', 'calming', 'focus']
+        enum: ['box', 'relaxing', 'energizing', 'calming', 'focus', '4-7-8']
+      },
+      pattern: {
+        type: Type.STRING,
+        description: 'Optional breathing pattern alias (e.g., "box", "calming", "4-7-8")'
       },
       durationMinutes: {
         type: Type.NUMBER,
         description: 'For meditation: duration in minutes (default 5)'
       },
+      durationSeconds: {
+        type: Type.NUMBER,
+        description: 'Optional exact duration in seconds for breathing/meditation/timer sessions'
+      },
+      duration: {
+        type: Type.NUMBER,
+        description: 'Optional duration in seconds (legacy alias)'
+      },
+      label: {
+        type: Type.STRING,
+        description: 'Optional display label for timer/mindful sessions'
+      },
       pace: {
         type: Type.STRING,
         description: 'Initial pace for guidance cues',
         enum: ['slow', 'normal', 'fast']
+      },
+      intent: {
+        type: Type.STRING,
+        description: 'Optional mindful intent for breathing/meditation/timer',
+        enum: ['breathing_reset', 'deep_meditation', 'sleep_prep', 'focus_block']
+      },
+      guidanceStyle: {
+        type: Type.STRING,
+        description: 'Speech density style for mindful guidance',
+        enum: ['full', 'light', 'silent']
+      },
+      style: {
+        type: Type.STRING,
+        description: 'Alias of guidanceStyle',
+        enum: ['full', 'light', 'silent']
+      },
+      guidance: {
+        type: Type.OBJECT,
+        description: 'Optional guidance object wrapper',
+        properties: {
+          style: {
+            type: Type.STRING,
+            enum: ['full', 'light', 'silent']
+          },
+          intent: {
+            type: Type.STRING,
+            enum: ['breathing_reset', 'deep_meditation', 'sleep_prep', 'focus_block']
+          }
+        }
+      },
+      phases: {
+        type: Type.ARRAY,
+        description: 'Optional mindful phases; if omitted, runtime will derive phases from intent',
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            id: { type: Type.STRING },
+            kind: { type: Type.STRING, enum: ['settle', 'breath_cycle', 'body_scan', 'meditation', 'closing'] },
+            durationSeconds: { type: Type.NUMBER },
+            order: { type: Type.NUMBER }
+          }
+        }
       }
     },
     required: ['activityType']
@@ -600,4 +658,3 @@ export const sendMessageToGemini = async (history: Message[], text: string, cont
     return { text: "I'm focusing my energy on connecting to the server. Can you try that again?" };
   }
 };
-

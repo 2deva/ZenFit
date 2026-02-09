@@ -1,15 +1,18 @@
-
+﻿
 import React from 'react';
 import { Message } from '../types';
 import { MessageBubble } from './MessageBubble';
-import { Sparkles, ArrowRight, MessageCircle, Dumbbell, Target, Brain, BarChart2, ChevronDown, Mic } from 'lucide-react';
+import { ArrowRight, MessageCircle, Dumbbell, Target, Brain, BarChart2, ChevronDown, Mic, Moon, Wind } from 'lucide-react';
+import { ZenLogo } from './ZenLogo';
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import { useAuth } from '../contexts/AuthContext';
+import { OnboardingState } from '../services/supabaseService';
 
 interface ChatInterfaceProps {
     messages: Message[];
     isTyping?: boolean;
     userId?: string; // Supabase user ID for cross-device sync
+    onboardingState?: OnboardingState | null;
     onAction: (action: string, data: any) => void;
     onSendMessage?: (text: string) => void;
     onAddMessageToChat?: (text: string) => void; // Add message to chat without sending to Gemini
@@ -18,7 +21,7 @@ interface ChatInterfaceProps {
     audioDataRef?: React.MutableRefObject<Float32Array>; // Changed from Float32Array to ref
     aiState?: 'listening' | 'speaking' | 'processing' | 'idle';
     currentGuidanceText?: string;
-    onLiveControl?: (action: 'pause' | 'resume' | 'skip' | 'back') => void;
+    onLiveControl?: (action: 'start' | 'pause' | 'resume' | 'skip' | 'stop' | 'back' | 'reset') => void;
     onStartLiveMode?: (message: string) => void; // Callback to start Live Mode and send message
     // Active workout tracking
     activeWorkoutMessageId?: string | null;
@@ -35,80 +38,67 @@ interface ChatInterfaceProps {
     } | null;
 }
 
-// Animated Zen Mascot Component
-const ZenMascot = () => (
-    <div className="relative w-28 h-28 sm:w-36 sm:h-36 mx-auto mb-6 sm:mb-8">
-        {/* Outer glow ring */}
-        <div className="absolute inset-0 rounded-full bg-gradient-to-br from-claude-300/30 to-claude-500/20 animate-zen-glow"></div>
 
-        {/* Rotating decorative ring */}
-        <div className="absolute inset-2 sm:inset-3">
-            <svg className="w-full h-full animate-zen-rotate" viewBox="0 0 100 100">
-                <circle
-                    cx="50" cy="50" r="45"
-                    fill="none"
-                    stroke="url(#mascotRingGradient)"
-                    strokeWidth="1.5"
-                    strokeDasharray="20 10 5 10"
-                    strokeLinecap="round"
-                    opacity="0.4"
-                />
-                <defs>
-                    <linearGradient id="mascotRingGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" stopColor="#E87A38" />
-                        <stop offset="100%" stopColor="#D96922" />
-                    </linearGradient>
-                </defs>
-            </svg>
-        </div>
 
-        {/* Main Zen symbol */}
-        <div className="absolute inset-4 sm:inset-5 animate-zen-float">
-            <div className="w-full h-full rounded-full bg-gradient-to-br from-white to-sand-100 border border-sand-200/50 shadow-soft-lg flex items-center justify-center">
-                <svg width="48" height="48" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-10 h-10 sm:w-12 sm:h-12">
-                    <defs>
-                        <linearGradient id="zenSymbolGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                            <stop offset="0%" stopColor="#E87A38" />
-                            <stop offset="100%" stopColor="#D96922" />
-                        </linearGradient>
-                    </defs>
-                    <circle cx="16" cy="16" r="11" stroke="url(#zenSymbolGradient)" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeDasharray="50 16" />
-                    <circle cx="16" cy="16" r="4" fill="url(#zenSymbolGradient)" />
-                </svg>
-            </div>
-        </div>
 
-        {/* Sparkle accents */}
-        <div className="absolute -top-1 -right-1 w-4 h-4 text-claude-400 animate-pulse" style={{ animationDelay: '0.5s' }}>
-            <Sparkles className="w-full h-full" />
-        </div>
-        <div className="absolute -bottom-2 -left-2 w-3 h-3 text-claude-300 animate-pulse" style={{ animationDelay: '1s' }}>
-            <Sparkles className="w-full h-full" />
-        </div>
-    </div>
-);
 
-// Conversation Starter Pill
-interface StarterPillProps {
+// Action Card Component
+interface ActionCardProps {
     icon: React.ReactNode;
-    text: string;
+    title: string;
+    description: string;
     onClick: () => void;
     delay?: number;
 }
 
-const StarterPill: React.FC<StarterPillProps> = ({ icon, text, onClick, delay = 0 }) => (
+// Creative Voice Mode Icon - Voice waveform visualizer
+const VoiceModeIcon = ({ className = "w-6 h-6" }: { className?: string }) => (
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
+        <defs>
+            <linearGradient id="voiceGradientHome" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#E87A38" />
+                <stop offset="100%" stopColor="#D96922" />
+            </linearGradient>
+        </defs>
+
+        {/* Voice waveform bars - audio visualizer style */}
+        <g className="group-hover:scale-110 transition-transform origin-center">
+            {/* Left outer bar */}
+            <rect x="2.5" y="8" width="3" height="8" rx="1.5" fill="url(#voiceGradientHome)" opacity="0.6" />
+
+            {/* Left inner bar */}
+            <rect x="6.5" y="5" width="3" height="14" rx="1.5" fill="url(#voiceGradientHome)" opacity="0.85" />
+
+            {/* Center bar - tallest - fully opaque */}
+            <rect x="10.5" y="3" width="3" height="18" rx="1.5" fill="url(#voiceGradientHome)" />
+
+            {/* Right inner bar */}
+            <rect x="14.5" y="5" width="3" height="14" rx="1.5" fill="url(#voiceGradientHome)" opacity="0.85" />
+
+            {/* Right outer bar */}
+            <rect x="18.5" y="8" width="3" height="8" rx="1.5" fill="url(#voiceGradientHome)" opacity="0.6" />
+        </g>
+    </svg>
+);
+
+const ActionCard: React.FC<ActionCardProps> = ({ icon, title, description, onClick, delay = 0 }) => (
     <button
         onClick={onClick}
-        className="group flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-5 py-3 sm:py-3.5 bg-white/90 backdrop-blur-sm rounded-2xl border border-sand-200 hover:border-claude-300 hover:shadow-glow-claude transition-all duration-500 opacity-0 animate-reveal-up shadow-soft w-full"
+        className="group flex items-center gap-4 p-3 sm:p-4 bg-white/80 backdrop-blur-sm rounded-2xl sm:rounded-[28px] border border-sand-200 hover:border-claude-300 hover:shadow-soft-lg transition-all duration-300 opacity-0 animate-reveal-up w-full text-left"
         style={{ animationDelay: `${delay}ms`, animationFillMode: 'forwards' }}
     >
-        <span className="text-claude-500 group-hover:scale-110 transition-transform duration-300 flex-shrink-0">
+        <div className="p-3 bg-white rounded-xl shadow-soft group-hover:scale-110 transition-transform duration-300 text-claude-500 flex-shrink-0">
             {icon}
-        </span>
-        <span className="font-semibold text-sm sm:text-base text-ink-700 group-hover:text-ink-900 transition-colors">
-            {text}
-        </span>
-        <ArrowRight className="w-4 h-4 text-ink-300 group-hover:text-claude-500 group-hover:translate-x-1 transition-all duration-300 ml-auto flex-shrink-0" />
+        </div>
+        <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-lg text-ink-900 group-hover:text-claude-600 transition-colors mb-1 truncate">
+                {title}
+            </h3>
+            <p className="text-sm text-ink-500 leading-relaxed line-clamp-2">
+                {description}
+            </p>
+        </div>
+        <ArrowRight className="w-5 h-5 text-ink-300 group-hover:text-claude-500 group-hover:translate-x-1 transition-all duration-300 flex-shrink-0" />
     </button>
 );
 
@@ -124,6 +114,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     messages,
     isTyping,
     userId,
+    onboardingState,
     onAction,
     onSendMessage,
     onAddMessageToChat,
@@ -271,27 +262,120 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }, [filteredMessages.length]);
 
     const handleStarterClick = (message: string, startLiveMode: boolean = false) => {
-        if (startLiveMode && onStartLiveMode) {
+        if (startLiveMode) {
             // Add message to chat for consistency (without sending to Gemini text mode)
             if (onAddMessageToChat) {
                 onAddMessageToChat(message);
             }
-            // Start Live Mode and send message directly to voice
-            onStartLiveMode(message);
+
+            // Prefer Live startup path for live cards; fallback to text mode only when unavailable.
+            if (onStartLiveMode) {
+                onStartLiveMode(message);
+            } else if (onSendMessage) {
+                onSendMessage(message);
+            }
+
             // Scroll to bottom after starting
             setTimeout(() => scrollToBottom(true), 100);
-        } else {
-            // Regular text message flow
-            if (onSendMessage) {
-                onSendMessage(message);
-                // Scroll to bottom after sending
-                setTimeout(() => scrollToBottom(true), 100);
-            }
+            return;
+        }
+
+        // Regular text message flow
+        if (onSendMessage) {
+            onSendMessage(message);
+            // Scroll to bottom after sending
+            setTimeout(() => scrollToBottom(true), 100);
         }
     };
 
     const greeting = getGreeting();
     const userName = user?.displayName?.split(' ')[0];
+    // Treat signed-out users as first-time on landing, and signed-in users as first-time
+    // until they complete their first workout.
+    const isFirstTimeUser = !userId || !onboardingState || !onboardingState.firstWorkoutCompletedAt;
+
+    // Context-aware prompt logic
+    const hour = new Date().getHours();
+    const timeOfDay = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
+
+    const getContextCards = () => {
+        const cards = [];
+
+        // 1. Primary Action (Workout/Movement) - Time context. Prompts trigger immediate delivery + live (per system: do for user, action first).
+        if (timeOfDay === 'morning') {
+            cards.push({
+                id: 'morning-flow',
+                icon: <Dumbbell className="w-6 h-6" />,
+                title: "Morning Mobility",
+                description: "Feel looser in 5 minutes.",
+                action: "I want to set up a morning mobility session. Show the workoutBuilder first with focus, duration, level, and equipment options so I can choose, then generate the workout from my selection.",
+                isLive: true
+            });
+        } else if (timeOfDay === 'afternoon') {
+            cards.push({
+                id: 'afternoon-boost',
+                icon: <Dumbbell className="w-6 h-6" />,
+                title: "Energy Boost",
+                description: "Reset focus and energy fast.",
+                action: "I want an energy boost workout. Show the workoutBuilder first with focus, duration, level, and equipment options so I can select my preferences before you generate the workout.",
+                isLive: true
+            });
+        } else {
+            cards.push({
+                id: 'evening-unwind',
+                icon: <Moon className="w-6 h-6" />,
+                title: "Wind Down",
+                description: "Ease stress before sleep.",
+                action: "I want to wind down with movement. Show the workoutBuilder first so I can choose duration and intensity, then generate a session from my selections.",
+                isLive: true
+            });
+        }
+
+        // 2. Secondary Action (Mindfulness). Specific ask â†’ timer/breathing UI + live.
+        cards.push({
+            id: 'breathing',
+            icon: <Wind className="w-6 h-6" />,
+            title: "Breathwork",
+            description: "Calm your nervous system now.",
+            action: "Set up a guided box-breathing timer first with clear duration and voice-cue style, help me feel calmer within 2 minutes, then ask if I want to start or deepen the next round.",
+            isLive: true
+        });
+
+        // 3. Status/Progress. Prompts aligned to system: progress â†’ chart; goals â†’ invite-style, GoalSelector.
+        if (isFirstTimeUser) {
+            cards.push({
+                id: 'set-goals',
+                icon: <Target className="w-6 h-6" />,
+                title: "Set Goals",
+                description: "Build your personal plan.",
+                action: "Help me set goals in a way that feels easy to start today. Recommend the best first focus for me, ask one key question, and then propose my first small session.",
+                isLive: false
+            });
+        } else {
+            cards.push({
+                id: 'progress',
+                icon: <BarChart2 className="w-6 h-6" />,
+                title: "Progress",
+                description: "See wins and next best move.",
+                action: "Show my progress this week and highlight one meaningful win plus one concrete next step I can do today.",
+                isLive: false
+            });
+        }
+
+        // 4. Open conversation. Sets expectation so Zen replies with warmth, not a workout.
+        cards.push({
+            id: 'chat',
+            icon: <MessageCircle className="w-6 h-6" />,
+            title: "Just Chat",
+            description: "Get clarity, no pressure.",
+            action: "I just want to talk for a minute, no workout yet. Help me quickly identify what I need most right now and offer two tiny options I can choose from.",
+            isLive: false
+        });
+
+        return cards;
+    };
+
+    const actionCards = getContextCards();
 
     return (
         // Container that fills available space - uses absolute positioning to fill parent
@@ -300,7 +384,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             {filteredMessages.length === 0 && (
                 <div className="absolute inset-0 flex flex-col px-4 sm:px-6 z-10">
                     {/* Centered Content */}
-                    <div className="flex-1 flex flex-col justify-center items-center max-w-3xl mx-auto w-full">
+                    <div className="flex-1 flex flex-col justify-center items-center max-w-4xl mx-auto w-full">
                         {/* Greeting */}
                         <div className="text-center mb-10 sm:mb-12">
                             <h1 className="font-display text-5xl sm:text-6xl font-bold text-ink-900 mb-4 tracking-tight">
@@ -316,76 +400,44 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                             </h1>
                             <p className="text-ink-400 text-lg sm:text-xl leading-relaxed">
                                 {userName ? (
-                                    <>Your personal fitness coach.<br />Let&apos;s pick up where you left off.</>
+                                    <>Consistency over perfection.<br />Ready for a quick {timeOfDay} session when you are.</>
                                 ) : (
-                                    <>Your mindful fitness companion.<br />Let&apos;s build habits together.</>
+                                    <>Your calm coach for movement and mindfulness.<br />One session at a time.</>
                                 )}
                             </p>
                         </div>
 
-                        {/* Pill Buttons (Zen skills: action-first) */}
-                        <div className="flex flex-wrap items-center justify-center gap-3 mb-6">
-                            <button
-                                onClick={() => handleStarterClick("I want to do a workout with your voice guidance.", true)}
-                                className="group flex items-center gap-2 px-5 py-3 bg-white/90 backdrop-blur-sm rounded-full border border-sand-200 hover:border-claude-300 hover:shadow-soft-md transition-all duration-300"
-                                data-testid="starter-workout-button"
-                            >
-                                <Dumbbell className="w-4 h-4 text-claude-500" />
-                                <span className="font-medium text-sm text-ink-700">Do a workout</span>
-                                <ArrowRight className="w-3.5 h-3.5 text-ink-300 group-hover:text-claude-500 group-hover:translate-x-0.5 transition-all" />
-                            </button>
-
-                            <button
-                                onClick={() => handleStarterClick("Guide me through a breathing exercise or meditation.", true)}
-                                className="group flex items-center gap-2 px-5 py-3 bg-white/90 backdrop-blur-sm rounded-full border border-sand-200 hover:border-claude-300 hover:shadow-soft-md transition-all duration-300"
-                                data-testid="starter-mindfulness-button"
-                            >
-                                <Brain className="w-4 h-4 text-claude-500" />
-                                <span className="font-medium text-sm text-ink-700">Breathing</span>
-                                <ArrowRight className="w-3.5 h-3.5 text-ink-300 group-hover:text-claude-500 group-hover:translate-x-0.5 transition-all" />
-                            </button>
-
-                            <button
-                                onClick={() => handleStarterClick("Show my progress this week.")}
-                                className="group flex items-center gap-2 px-5 py-3 bg-white/90 backdrop-blur-sm rounded-full border border-sand-200 hover:border-claude-300 hover:shadow-soft-md transition-all duration-300"
-                                data-testid="starter-progress-button"
-                            >
-                                <BarChart2 className="w-4 h-4 text-claude-500" />
-                                <span className="font-medium text-sm text-ink-700">My progress</span>
-                                <ArrowRight className="w-3.5 h-3.5 text-ink-300 group-hover:text-claude-500 group-hover:translate-x-0.5 transition-all" />
-                            </button>
-
-                            <button
-                                onClick={() => handleStarterClick("Hey Zen! Let's just chat.")}
-                                className="group flex items-center gap-2 px-5 py-3 bg-white/90 backdrop-blur-sm rounded-full border border-sand-200 hover:border-claude-300 hover:shadow-soft-md transition-all duration-300"
-                                data-testid="starter-chat-button"
-                            >
-                                <MessageCircle className="w-4 h-4 text-claude-500" />
-                                <span className="font-medium text-sm text-ink-700">Just chat</span>
-                                <ArrowRight className="w-3.5 h-3.5 text-ink-300 group-hover:text-claude-500 group-hover:translate-x-0.5 transition-all" />
-                            </button>
+                        {/* Action Cards Grid */}
+                        {/* Action Cards Grid - Aligned with input max-width */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-2xl mb-8">
+                            {actionCards.map((card, index) => (
+                                <ActionCard
+                                    key={card.id}
+                                    icon={card.icon}
+                                    title={card.title}
+                                    description={card.description}
+                                    onClick={() => handleStarterClick(card.action, card.isLive)}
+                                    delay={index * 100}
+                                />
+                            ))}
                         </div>
                     </div>
 
                     {/* Bottom Input */}
                     <div className="w-full max-w-2xl mx-auto pb-4 sm:pb-6">
-                        <div className="bg-white/95 backdrop-blur-xl rounded-2xl sm:rounded-[28px] p-2 flex items-center gap-2 shadow-soft-lg border border-sand-300">
+                        <div className="bg-white/95 backdrop-blur-xl rounded-2xl sm:rounded-[28px] p-2 flex items-center gap-2 shadow-soft-lg border border-sand-300 transition-all focus-within:ring-2 focus-within:ring-claude-200">
                             <input
                                 type="text"
                                 placeholder="What's on your mind?"
-                                className="flex-1 bg-transparent border-none outline-none focus:outline-none focus:ring-0 py-2.5 sm:py-3 px-3 sm:px-5 text-ink-800 placeholder:text-ink-300 text-sm sm:text-base font-medium"
+                                className="flex-1 bg-transparent border-none outline-none focus:outline-none focus:ring-0 py-2.5 sm:py-3 px-3 sm:px-5 text-ink-800 placeholder:text-ink-400 text-sm sm:text-base font-medium"
                                 data-testid="empty-state-input"
-                                onFocus={(e) => {
-                                    if (onSendMessage) {
-                                        e.target.blur();
-                                        const message = e.target.value || "Hi Zen!";
-                                        onSendMessage(message);
-                                    }
-                                }}
                                 onKeyDown={(e) => {
                                     if (e.key === 'Enter' && onSendMessage) {
-                                        const message = (e.target as HTMLInputElement).value || "Hi Zen!";
-                                        onSendMessage(message);
+                                        const target = e.target as HTMLInputElement;
+                                        const message = target.value.trim();
+                                        if (message) {
+                                            onSendMessage(message);
+                                        }
                                     }
                                 }}
                             />
@@ -405,7 +457,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                                 data-testid="empty-state-live-button"
                             >
                                 <div className="flex items-center justify-center">
-                                    <Mic className="w-4 h-4 sm:w-5 sm:h-5 group-hover:scale-110 transition-transform" />
+                                    <VoiceModeIcon className="w-5 h-5 sm:w-6 sm:h-6 group-hover:scale-110 transition-transform" />
                                     <span className="max-w-0 group-hover:max-w-[100px] opacity-0 group-hover:opacity-100 transition-all duration-500 ease-in-out overflow-hidden whitespace-nowrap ml-0 group-hover:ml-2 text-xs sm:text-sm font-semibold tracking-tight">
                                         Live Mode
                                     </span>
@@ -472,7 +524,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                                             {/* Avatar */}
                                             <div className="flex-shrink-0 mt-1">
                                                 <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg sm:rounded-xl bg-gradient-to-br from-claude-500 to-claude-600 flex items-center justify-center shadow-soft text-white animate-breathe">
-                                                    <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                                    <ZenLogo className="w-4 h-4 sm:w-5 sm:h-5 text-white" monochrome />
                                                 </div>
                                             </div>
 
@@ -492,20 +544,25 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     }}
                     itemContent={(index, msg) => (
                         <div className="px-3 sm:px-6 max-w-2xl mx-auto">
-                            <MessageBubble
-                                key={msg.id}
-                                message={msg}
-                                userId={userId}
-                                onAction={onAction}
-                                isLiveMode={isLiveMode}
-                                audioDataRef={audioDataRef}
-                                aiState={aiState}
-                                currentGuidanceText={currentGuidanceText}
-                                onLiveControl={onLiveControl}
-                                guidanceMessages={msg.uiComponent?.type === 'workoutList' || msg.uiComponent?.type === 'timer' ? guidanceMessages : undefined}
-                                activeTimer={msg.uiComponent?.type === 'timer' ? activeTimer : undefined}
-                                workoutProgress={msg.uiComponent?.type === 'workoutList' ? workoutProgress : undefined}
-                            />
+                            {(() => {
+                                const isActiveGuidanceThread = !!activeWorkoutMessageId && msg.id === activeWorkoutMessageId;
+                                return (
+                                    <MessageBubble
+                                        key={msg.id}
+                                        message={msg}
+                                        userId={userId}
+                                        onAction={onAction}
+                                        isLiveMode={isLiveMode}
+                                        audioDataRef={audioDataRef}
+                                        aiState={aiState}
+                                        currentGuidanceText={currentGuidanceText}
+                                        onLiveControl={onLiveControl}
+                                        guidanceMessages={isActiveGuidanceThread && (msg.uiComponent?.type === 'workoutList' || msg.uiComponent?.type === 'timer') ? guidanceMessages : undefined}
+                                        activeTimer={isActiveGuidanceThread && msg.uiComponent?.type === 'timer' ? activeTimer : undefined}
+                                        workoutProgress={isActiveGuidanceThread && msg.uiComponent?.type === 'workoutList' ? workoutProgress : undefined}
+                                    />
+                                );
+                            })()}
                         </div>
                     )}
                 />
@@ -513,3 +570,5 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         </div>
     );
 };
+
+

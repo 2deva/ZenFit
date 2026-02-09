@@ -1,31 +1,23 @@
 # 🧘🏃🏻 ZenFit
 
-> **"Stop just planning your fitness goals. Start training with a personalized AI-powered coach that helps you stay consistent and truly achieve them."**
+> **"Most fitness apps help you plan workouts. ZenFit helps you come back after you fall off."**
 
-**ZenFit** is the world's first **Psychology-First AI Fitness Agent**. Built with **Google Gemini 2.5 Flash** and **Gemini Live**, it transforms the standard "text-in, text-out" chatbot experience into a proactive, multimodal coaching session.
+**ZenFit** is a **behavioral recovery system** for fitness. Instead of optimizing perfect workout plans, it optimizes the hardest moment in the journey: the restart after a missed day, a bad week, or a broken streak.
 
----
+Most products try to make planning smarter; ZenFit is built around **re‑entry after failure**. It detects disengagement, lowers activation energy with tiny "re‑start" sessions, and then guides you through them hands‑free so showing up again feels almost inevitable.
 
-**"ZenFit: Help people actually achieve their goals—not just make them."**
+Under the hood, ZenFit logs and evaluates real user–agent behavior with **Opik**, so we can measure whether ZenFit is actually reducing friction, repairing streaks, and staying safe—not just sounding supportive. (Details in the Opik section below.)
 
-ZenFit directly addresses the #1 reason resolutions fail: **The gap between Planning and Doing.**
-*   **Action-Parallel Protocol**: While other apps ask 20 questions, ZenFit starts your workout *immediately*.
-*   **Psychology Adherence**: It detects "Burnout" vs "Laziness" and pivots your plan to keep the streak alive.
-*   **Real-time Accountability**: It counts your reps for you, making it impossible to "fake" a session.
+Built on **Google Gemini 2.5 Flash** and **Gemini Live**, ZenFit turns that behavioral loop into a live, voice‑driven experience with adaptive UI and stateful guidance.
 
 ---
 
-## 🧠 The Difference: Agentic vs. Passive
+## 🧠 The Behavioral Recovery Loop
 
-Most AI fitness apps are **Passive**:
-*   *You:* "I want to workout."
-*   *App:* "Here is a list of pushups." (Text)
-
-ZenFit is **Agentic**:
-*   *You:* "I want to workout."
-*   *ZenFit:* "I know you're stressed from work today. Let's do a 15-minute high-intensity release. I've set the timer. **Ready to start your first set?**" (Voice + UI + State Tracking)
-
-ZenFit doesn't just *retrieve* information; it **executes** guidance.
+1. **Detect disengagement**: Calendar + context notice missed sessions or “I fell off” language.
+2. **Lower the barrier**: ZenFit proposes a tiny, time‑boxed re‑entry (e.g. a 5‑minute reset instead of a full workout).
+3. **Guide the comeback**: During the session, ZenFit talks you through reps, breathing, and rest so you never need to touch your phone.
+4. **Measure & improve**: Each interaction and live session is traced and scored in Opik so we can iterate on behaviors that actually bring people back.
 
 ---
 
@@ -148,30 +140,34 @@ Zenfit is "Vercel-Ready".
 
 ## 📊 Opik integration (Evaluation & observability)
 
-ZenFit uses [Opik](https://www.comet.com/docs/opik) for **tracing**, **evaluation**, and **prompt optimization** so we can measure and improve agent behavior systematically.
+ZenFit uses [Opik](https://www.comet.com/docs/opik) for **tracing**, **evaluation**, and **prompt optimization** so we can measure and improve agent behavior systematically. When we improve scores in Opik, we're improving the very behaviors that help users **stick to their fitness resolutions**.
 
 ### What we trace
-* **Chat**: Every request through `/api/chat` (Vercel serverless or local dev API) is traced via `opik-gemini` (Node-only). Tool calls (renderUI, calendar, getEvents) and Gemini responses are captured.
+* **Chat**: Every request through `/api/opik/chat` (Vercel serverless or local dev API) is traced via `opik-gemini` (Node-only). Tool calls (renderUI, calendar, getEvents) and Gemini responses are captured.
+* **Live sessions**: Each Live session is summarized and logged to an Opik experiment (`zenfit-live-obs-1`) with adherence-oriented scores.
 * **Where**: Production → Vercel `/api/chat`; local → `npm run dev` + `npm run dev:api` with Vite proxying `/api` to the API server.
 
-### What we evaluate
-We run a **15–20 scenario eval** and log one **Opik experiment** with deterministic scores:
-* **action_first**: Response includes a concrete action (timer, workoutList, workoutBuilder, chart) or renderUI.
+### What we evaluate (resolution-adherence metrics)
+We run a **23-scenario eval** through the **real chat pipeline** (same as production) and log one **Opik experiment** with deterministic scores. These metrics are chosen so that improving them directly improves resolution adherence:
+* **action_first**: Response includes a concrete action (timer, workoutList, workoutBuilder, chart) or renderUI — *deliver value without blocking on questions (Fogg: Behavior = Motivation × Ability × Prompt).*
 * **tool_correctness**: Valid renderUI props (e.g. timer duration in seconds).
-* **safety**: No medical/danger language; injury-like inputs get a provider/doctor/care mention.
-* **friction**: Low-energy prompts (“I’m tired”) get short sessions (e.g. timer ≤ 10 min).
+* **safety**: No medical/danger language; injury-like inputs get a provider/doctor/care mention — *no medical overreach (SHARP/FDA-style).*
+* **friction**: Low-energy prompts (“I’m tired”) get short sessions (e.g. timer ≤ 10 min) — *lower barrier, less drop-off (Duolingo-style).*
+* **empathy** & **reengage_support**: For “I fell off” / “streak broke” we expect supportive, re-entry language — *streak repair, no shame.*
 
 ### How to run the eval
 ```bash
 # Env: GEMINI_API_KEY (or API_KEY), OPIK_API_KEY, OPIK_PROJECT_NAME, OPIK_WORKSPACE (if required)
 npm run eval:opik
 ```
-Results appear under **Evaluation → Experiments** in the Opik dashboard.
 
 ### Agent Optimizer
-We use the **Opik Agent Optimizer** (MetaPrompt) to improve the Zen system prompt:
-* **Dataset**: Same 15–20 scenarios (or call deployed `/api/chat` from Python).
+We use the **Opik Agent Optimizer** (MetaPrompt) to improve the Zen system prompt; the best-performing prompt is deployed to our production agent.
+* **Dataset**: Same resolution-aligned scenarios (`zenfit-optimizer-dataset`).
 * **Metric**: Composite (action_first + safety + relevance).
-* **Run**: `scripts/opik-optimizer/run_optimizer.py` (Python 3.10+, `pip install -r scripts/opik-optimizer/requirements.txt`, then `opik configure`).
+* **Run**: `python scripts/opik-optimizer/run_optimizer.py` (Python 3.10+, `pip install -r scripts/opik-optimizer/requirements.txt`, then `opik configure`). Env: `OPIK_API_KEY`, `GEMINI_API_KEY` or `OPENAI_API_KEY`.
 
 Results appear under **Evaluation → Optimization runs** in the Opik dashboard.
+
+### How Opik improves ZenFit
+We trace every chat and log Live session summaries; we run the 23-scenario eval and log experiments; we use the Agent Optimizer to improve our system prompt and deploy the best variant. So **Opik directly drives the behaviors that help users stick** — action first, low friction, re-engagement support, and safety. For judging: link to our Opik project and screenshots of **Traces**, **Experiments** (e.g. `zenfit-eval-run-2`), and **Optimization runs** are in the submission or under `docs/opik/`.

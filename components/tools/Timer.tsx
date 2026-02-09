@@ -7,7 +7,7 @@ interface TimerProps {
   durationSeconds?: number;
   label?: string;
   onStateChange?: (state: { label: string; totalSeconds: number; remainingSeconds: number; isRunning: boolean }) => void;
-  onComplete?: (data: { label: string; durationSeconds: number; goalType?: string; goalIds?: string[] }) => void;
+  onComplete?: (data: { label: string; durationSeconds: number; goalType?: string; goalIds?: string[]; activityId?: string }) => void;
 
   // Goal metadata (for LifeContext integration)
   goalType?: string;
@@ -70,9 +70,12 @@ export const Timer: React.FC<TimerProps> = ({
   const dashoffset = circumference - progress * circumference;
   const timeLeftDisplay = clampedTimeLeft;
 
-  const owningSession = Object.values(activitySessions || {}).find(
-    session => session.label === label
-  );
+  const owningSession = Object.values(activitySessions || {})
+    .filter(session => session.label === label)
+    .sort((a, b) => {
+      const stateRank = (s: string) => (s === 'running' ? 3 : s === 'paused' ? 2 : s === 'completed' ? 1 : 0);
+      return stateRank(b.state) - stateRank(a.state);
+    })[0];
   const isMindfulSession =
     !!owningSession &&
     (owningSession.type === 'breathing' || owningSession.type === 'meditation' ||
@@ -177,10 +180,11 @@ export const Timer: React.FC<TimerProps> = ({
         label,
         durationSeconds,
         goalType,
-        goalIds
+        goalIds,
+        activityId: owningSession?.id
       });
     }
-  }, [shouldShowComplete, controlledTimeLeft, timeLeftDisplay, label, durationSeconds, goalType, goalIds]);
+  }, [shouldShowComplete, controlledTimeLeft, timeLeftDisplay, label, durationSeconds, goalType, goalIds, owningSession?.id]);
 
   const toggle = () => {
     if (shouldShowComplete) {
@@ -280,7 +284,7 @@ export const Timer: React.FC<TimerProps> = ({
   };
 
   const primaryButtonLabel = isMindfulSession
-    ? (shouldShowComplete ? "End session" : undefined)
+    ? (shouldShowComplete ? "Session completed" : undefined)
     : (shouldShowComplete ? "Done" : undefined);
 
   return (
@@ -372,15 +376,17 @@ export const Timer: React.FC<TimerProps> = ({
                 {isActive ? <Pause className="w-5 h-5 sm:w-6 sm:h-6 fill-white" /> : <Play className="w-5 h-5 sm:w-6 sm:h-6 fill-white ml-0.5" />}
               </Button>
             ) : (
-              <Button
-                className="h-11 sm:h-14 px-6 sm:px-8 rounded-xl sm:rounded-2xl bg-gradient-to-r from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 text-white shadow-lg shadow-green-500/20 text-sm sm:text-base"
-                onClick={reset}
-              >
-                {primaryButtonLabel || "Done"}
-              </Button>
+              !isMindfulSession && (
+                <Button
+                  className="h-11 sm:h-14 px-6 sm:px-8 rounded-xl sm:rounded-2xl bg-gradient-to-r from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 text-white shadow-lg shadow-green-500/20 text-sm sm:text-base"
+                  onClick={reset}
+                >
+                  {primaryButtonLabel || "Done"}
+                </Button>
+              )
             )}
 
-            {!shouldShowComplete && (
+            {(!shouldShowComplete || isMindfulSession) && (
               <Button
                 variant="secondary"
                 size="icon"

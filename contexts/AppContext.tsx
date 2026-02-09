@@ -5,13 +5,15 @@ import { useMessages } from '../hooks/useMessages';
 import { useActivityState, ActivitySession, ActivityTimer, ActivityEvent, ActivityIntent, ActivityPhase } from '../hooks/useActivityState';
 import { extractOnboardingContext, recordInteraction, getOnboardingState, deleteAllMessages, OnboardingState, createScheduledEvent } from '../services/supabaseService';
 import { getFullUserContext, UserMemoryContext, buildLifeContext } from '../services/userContextService';
-import { sendMessageToGemini, buildSystemInstruction } from '../services/geminiService';
+import { buildSystemInstruction } from '../services/geminiService';
 import { extractAndStoreSummary } from '../services/embeddingService';
 import { createCalendarEvent, getCalendarContext, getFreeSlotsContext, getUpcomingEvents } from '../services/calendarService';
 import { createActionHandlers, handleAction } from '../handlers/actionHandlers';
 import { clearAllStorage } from '../services/storageService';
 import { buildUserContext } from '../utils/contextBuilder';
 import { normalizeTimerProps } from '../utils/timerProps';
+import { getExercisePool } from '../services/exerciseGifService';
+import { composePhysicalWorkoutFromRequest } from '../services/sessionGeneratorService';
 import { TIMING, UI_LIMITS, PATTERNS, TEXT, ACTIONS } from '../constants/app';
 import { supabase } from '../supabaseConfig';
 import { v4 as uuidv4 } from 'uuid';
@@ -41,6 +43,7 @@ interface AppContextType {
     // Messages
     messages: Message[];
     setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
+    isMessagesInitialized: boolean;
     addMessageToChat: (text: string) => void;
     handleSendMessage: (text?: string, profileOverride?: UserProfile) => Promise<void>;
 
@@ -139,7 +142,7 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
     // --- Complex State Hooks ---
-    const { messages, setMessages, clearMessages } = useMessages({ supabaseUserId });
+    const { messages, setMessages, clearMessages, isInitialized: isMessagesInitialized } = useMessages({ supabaseUserId });
     const {
         activeTimer, setActiveTimer,
         currentWorkoutProgress, setCurrentWorkoutProgress,
@@ -327,17 +330,22 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
                 if (nextFreeWindow) systemInstruction += '\nNext free window today: ' + nextFreeWindow;
                 systemInstruction += '\nINSTRUCTION: When suggesting a time for a workout, prefer these slots when present. For proactive nudges (e.g. no movement today), use the next free window when relevant.';
             }
-            const apiRes = await fetch('/api/chat', {
+            const apiRes = await fetch('/api/opik/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    messages: messages.concat(userMsg).map(m => ({ role: m.role, text: m.text })),
+                    // Send prior history only; server will append newMessage.
+                    messages: messages.map(m => ({ role: m.role, text: m.text })),
                     newMessage: userMsg.text,
                     systemInstruction,
                 }),
             });
             if (apiRes.ok) {
                 response = await apiRes.json();
+                // Guard against empty assistant payloads from server/model.
+                if (!response.text && !response.uiComponent && (!response.functionCalls || response.functionCalls.length === 0)) {
+                    response = { text: "I'm here with you. Could you try that one more time?" };
+                }
             } else {
                 const errData = await apiRes.json().catch(() => ({}));
                 response = { text: (errData as { text?: string }).text || "I'm having trouble connecting. Please try again." };
@@ -348,13 +356,53 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
                 }
             }
         } catch {
-            response = await sendMessageToGemini(messages.concat(userMsg), userMsg.text, context);
+            response = { text: "I'm having trouble connecting. Please try again." };
         }
 
-        // Normalize timer duration so "1 min" requests don't show 5:00 (model sometimes sends 300 or omits)
+        // Normalize timer duration: match stated minutes in reply (e.g. "5-minute" → 300s); "1 min" request → 60s
         let uiComponent = response.uiComponent;
         if (uiComponent?.type === 'timer' && uiComponent.props) {
-            uiComponent = { ...uiComponent, props: normalizeTimerProps(uiComponent.props, content) };
+            uiComponent = { ...uiComponent, props: normalizeTimerProps(uiComponent.props, content, response.text) };
+        }
+        if (uiComponent?.type === 'workoutList') {
+            const rawExercises = uiComponent.props?.exercises;
+            const hasValidExercises = Array.isArray(rawExercises) && rawExercises.length > 0
+                && rawExercises.some((ex: any) => ex != null && typeof ex.name === 'string');
+            if (hasValidExercises) {
+                try {
+                    const pool = await getExercisePool();
+                    const durationMinutes = typeof uiComponent.props.durationMinutes === 'number'
+                        ? uiComponent.props.durationMinutes
+                        : undefined;
+                    const normalizedWorkout = composePhysicalWorkoutFromRequest({
+                        title: uiComponent.props.title,
+                        exercises: uiComponent.props.exercises,
+                        durationMinutes,
+                        focus: content
+                    }, pool, {
+                        healthConditions: onboardingState?.healthConditions || []
+                    });
+                    uiComponent = {
+                        ...uiComponent,
+                        props: {
+                            ...uiComponent.props,
+                            ...normalizedWorkout
+                        }
+                    };
+                } catch (e) {
+                    console.warn('Failed to normalize model workoutList from exercise DB:', e);
+                }
+            } else {
+                // Model returned workoutList but invalid/empty exercises — show a safe default so we don't crash
+                uiComponent = {
+                    ...uiComponent,
+                    props: {
+                        ...uiComponent.props,
+                        title: uiComponent.props?.title || 'Quick stretch',
+                        exercises: [{ name: 'Gentle stretch', duration: '5 min' }]
+                    }
+                };
+            }
         }
 
         const modelMsg: Message = {
@@ -399,21 +447,29 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
             }
         }
 
+        const hasRenderableContent =
+            !!modelMsg.text.trim() ||
+            !!modelMsg.uiComponent ||
+            !!(modelMsg.groundingChunks && modelMsg.groundingChunks.length > 0);
+        if (!hasRenderableContent) {
+            modelMsg.text = "I'm here with you. Could you try that one more time?";
+        }
+
         setMessages(prev => [...prev, modelMsg]);
         setIsTyping(false);
         setLastMessageTime(Date.now());
 
-        if (response.uiComponent) {
-            addUIInteraction(response.uiComponent.type);
-            if (response.uiComponent.type === 'workoutList' && response.uiComponent.props?.exercises) {
-                const exercises = response.uiComponent.props.exercises as { name: string }[];
+        if (modelMsg.uiComponent) {
+            addUIInteraction(modelMsg.uiComponent.type);
+            if (modelMsg.uiComponent.type === 'workoutList' && modelMsg.uiComponent.props?.exercises) {
+                const exercises = modelMsg.uiComponent.props.exercises as { name: string }[];
                 setLastGeneratedWorkout({
-                    title: response.uiComponent.props.title || TEXT.WORKOUT_DEFAULT_TITLE,
+                    title: modelMsg.uiComponent.props.title || TEXT.WORKOUT_DEFAULT_TITLE,
                     exerciseCount: exercises.length,
                     generatedAt: Date.now()
                 });
                 setCurrentWorkoutProgress({
-                    title: response.uiComponent.props.title || TEXT.WORKOUT_DEFAULT_TITLE,
+                    title: modelMsg.uiComponent.props.title || TEXT.WORKOUT_DEFAULT_TITLE,
                     exercises: exercises.map(e => ({ name: e.name, completed: false })),
                     startedAt: Date.now()
                 });
@@ -488,6 +544,7 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
         lifeContext,
 
         messages, setMessages,
+        isMessagesInitialized,
         addMessageToChat,
         handleSendMessage,
 

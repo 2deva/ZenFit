@@ -26,15 +26,21 @@ import {
   bufferTranscript,
   clearSessionBuffer,
   extractFromTranscription,
-  extractAndStoreSessionSummary
+  extractAndStoreSessionSummary,
+  generateSessionSummary,
+  getSessionTranscripts
 } from '../services/liveSessionMemoryService';
 
 import { processToolInterceptors } from '../services/toolMiddleware';
 import { normalizeTimerProps } from '../utils/timerProps';
+import { resolveMindfulTimer } from '../utils/mindfulTimer';
+import { isIntentSafeReadinessUtterance } from '../utils/liveReadiness';
 
 import { createCalendarEvent, getUpcomingEvents } from '../services/calendarService';
 import { useAuth } from '../contexts/AuthContext';
 import { createScheduledEvent } from '../services/supabaseService';
+import { getExercisePool } from '../services/exerciseGifService';
+import { composePhysicalWorkoutFromRequest } from '../services/sessionGeneratorService';
 
 // Import new services
 import {
@@ -110,7 +116,7 @@ interface UseLiveSessionProps {
   // New: Voice command callbacks
   onVoiceCommand?: (action: string, response: string | null) => void;
   onPaceChange?: (pace: ActivityPaceState) => void;
-  onActivityControl?: (action: 'pause' | 'resume' | 'skip' | 'stop' | 'back') => void;
+  onActivityControl?: (action: 'start' | 'pause' | 'resume' | 'skip' | 'stop' | 'back' | 'reset') => void;
 
   // New: Error callbacks
   onError?: (type: string, message: string) => void;
@@ -195,8 +201,18 @@ export const useLiveSession = ({
     turnCount: 0,
     lastRefresh: Date.now()
   });
+  const liveSessionMetaRef = useRef<{
+    sessionId: string;
+    startedAt: number;
+    userMessageCount: number;
+    aiMessageCount: number;
+    lastUserMessage: string;
+    lastAiMessage: string;
+  } | null>(null);
+  const liveSessionLoggedRef = useRef<boolean>(false);
   const keepaliveIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastGuidanceCueTimeRef = useRef<number>(0);
+  const nextGuidanceCueAtRef = useRef<number>(0);
 
   // Store reference to guidance executor for external control
   const guidanceExecutorRef = useRef<any>(null);
@@ -211,9 +227,12 @@ export const useLiveSession = ({
 
     if (sessionRef.current && isConnectedRef.current && isSessionReadyRef.current) {
       try {
-        // Small delay for rapid cues to prevent overwhelming API
-        const timeSinceLastCue = Date.now() - lastGuidanceCueTimeRef.current;
-        const minDelay = cueType === 'count' ? 100 : 500; // Shorter delay for counting, longer for instructions
+        // Queue guidance cues with a small minimum gap so countdown numbers stay ordered
+        // and the live API is not flooded by back-to-back turns.
+        const minDelay = cueType === 'count' ? 900 : 500;
+        const now = Date.now();
+        const scheduledAt = Math.max(now, nextGuidanceCueAtRef.current);
+        nextGuidanceCueAtRef.current = scheduledAt + minDelay;
 
         const sendCue = () => {
           // Double-check session is still ready before sending
@@ -271,9 +290,9 @@ export const useLiveSession = ({
           }
         };
 
-        if (timeSinceLastCue < minDelay) {
-          // Delay to prevent overwhelming API
-          setTimeout(sendCue, minDelay - timeSinceLastCue);
+        const delay = Math.max(0, scheduledAt - now);
+        if (delay > 0) {
+          setTimeout(sendCue, delay);
         } else {
           sendCue();
         }
@@ -366,6 +385,44 @@ export const useLiveSession = ({
   // Track last timer shown for auto-start detection
   const lastTimerRef = useRef<{ label: string; duration: number; activityType: string; config: any; timestamp: number } | null>(null);
 
+  const buildMindfulTimerActivity = useCallback((timerProps: any) => {
+    const duration = timerProps?.duration ?? 60;
+    const label = timerProps?.label || 'Timer';
+    const resolved = resolveMindfulTimer(timerProps);
+    const activityType = resolved.activityType;
+
+    if (!activityType) {
+      return null;
+    }
+
+    const totalMinutes = Math.max(1, Math.floor(duration / 60));
+    const intent =
+      resolved.intent ||
+      (activityType === 'breathing'
+        ? 'breathing_reset'
+        : label.toLowerCase().includes('sleep')
+          ? 'sleep_prep'
+          : 'deep_meditation');
+
+    const config: any = {
+      duration,
+      durationMinutes: totalMinutes,
+      label,
+      guidanceStyle: resolved.guidanceStyle || 'light',
+      intent,
+      phases: resolved.phases
+    };
+
+    if (activityType === 'breathing') {
+      config.pattern = {
+        name: resolved.pattern || 'box',
+        cycles: Math.max(1, Math.floor(duration / 60))
+      };
+    }
+
+    return { activityType, config };
+  }, []);
+
   // Load workout refs from persistence on mount
   useEffect(() => {
     const loadWorkoutRefsData = async () => {
@@ -389,13 +446,16 @@ export const useLiveSession = ({
               });
             }
           }
+          if (savedRefs.lastTimer) {
+            lastTimerRef.current = savedRefs.lastTimer;
+          }
           console.log('LiveSession: Loaded workout refs from persistence');
         }
       } catch (e) {
         console.warn('Failed to load workout refs:', e);
       }
     };
-    loadWorkoutRefs();
+    loadWorkoutRefsData();
   }, []);
 
   // Track message ID with workoutList for dynamic updates and guidance message linking
@@ -670,6 +730,7 @@ export const useLiveSession = ({
     // Reset guidance state on disconnect (guidance can't continue without session)
     isGuidanceActiveRef.current = false;
     isExpectingGuidanceResponseRef.current = false;
+    nextGuidanceCueAtRef.current = 0;
     console.log("Disconnecting Live Session...");
     isConnectedRef.current = false;
     isSessionReadyRef.current = false; // Stop audio sending immediately
@@ -684,6 +745,50 @@ export const useLiveSession = ({
         }));
       } catch (e) {
         console.warn('Failed to save session state:', e);
+      }
+    }
+
+    // Generate summary ONCE for Opik logging (best-effort)
+    let opikSummary: any = null;
+    try {
+      opikSummary = await generateSessionSummary();
+    } catch (e) {
+      console.warn('LiveSession: Failed to generate summary for Opik logging:', e);
+    }
+
+    // Log Live session to Opik (best-effort)
+    if (!liveSessionLoggedRef.current && liveSessionMetaRef.current) {
+      liveSessionLoggedRef.current = true;
+      try {
+        const meta = liveSessionMetaRef.current!;
+        const transcripts = getSessionTranscripts(30);
+        const payload = {
+          sessionId: meta.sessionId,
+          startedAt: meta.startedAt,
+          endedAt: Date.now(),
+          durationMinutes: opikSummary?.duration ?? Math.max(0, Math.round((Date.now() - meta.startedAt) / 60000)),
+          userMessageCount: meta.userMessageCount,
+          aiMessageCount: meta.aiMessageCount,
+          lastUserMessage: meta.lastUserMessage,
+          lastAiMessage: meta.lastAiMessage,
+          transcripts,
+          summary: opikSummary ? {
+            userHighlights: opikSummary.userHighlights,
+            activitiesCompleted: opikSummary.activitiesCompleted,
+            memorableQuotes: opikSummary.memorableQuotes,
+            mood: opikSummary.mood,
+            briefSummary: opikSummary.aiResponses?.[0] || ''
+          } : null,
+          mode: 'live'
+        };
+
+        await fetch('/api/opik/live', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      } catch (e) {
+        console.warn('Opik live session log failed:', e);
       }
     }
 
@@ -720,6 +825,7 @@ export const useLiveSession = ({
 
     // Clear transcript buffer for next session
     clearSessionBuffer();
+    liveSessionMetaRef.current = null;
   }, [cleanupAudio, userId]);
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -749,146 +855,30 @@ export const useLiveSession = ({
 
             // Handle selection based on action type
             const action = selectedOption.data?.action;
+            let continueToReadinessCheck = false;
 
             if (action === 'startGuided' && selectedOption.data?.exercises) {
-              // Auto-start guided activity with the workout exercises
-              const executor = getGuidanceExecutor();
-              const config = createGuidanceConfig('workout', {
+              startGuidanceForWorkout('workout', {
                 title: selectedOption.data.title || 'Workout',
-                exercises: selectedOption.data.exercises,
-                pace: 'normal'
+                exercises: selectedOption.data.exercises
               });
-
-              executor.initialize(config, {
-                onCue: (cue, text) => {
-                  console.log(`GuidanceCue [${cue.type}]:`, text);
-                  sendGuidanceCueToGemini(text, cue.type);
-                },
-                onExerciseStart: (name, index) => {
-                  console.log(`Exercise started: ${name} (${index + 1}/${selectedOption.data.exercises?.length || '?'})`);
-                  // Update WorkoutList to show current active exercise
-                  if (onGuidedActivityStartRef.current && selectedOption?.data?.exercises) {
-                    const exercises = selectedOption.data.exercises;
-                    const completedExercises = exercises.slice(0, index).map((e: any) => e.name);
-                    onGuidedActivityStartRef.current('workout', {
-                      title: selectedOption.data.title || 'Workout',
-                      exercises,
-                      currentExerciseIndex: index,
-                      completedExercises,
-                      isTimerRunning: false // Timer starts on "Go!" cue
-                    });
-                  }
-                },
-                onExerciseComplete: (name, index) => {
-                  console.log(`Exercise complete: ${name} (${index + 1}/${selectedOption.data.exercises?.length || '?'})`);
-                  // Update parent with exercise completion for UI sync
-                  if (onGuidedActivityStartRef.current && selectedOption?.data?.exercises) {
-                    const exercises = selectedOption.data.exercises;
-                    const completedExercises = exercises.slice(0, index + 1).map((e: any) => e.name);
-                    onGuidedActivityStartRef.current('workout', {
-                      title: selectedOption.data.title || 'Workout',
-                      exercises,
-                      currentExerciseIndex: index + 1,
-                      completedExercises,
-                      isTimerRunning: false // Timer stops when exercise completes
-                    });
-                  }
-                },
-                onTimerControl: (action, exerciseIndex, duration) => {
-                  console.log(`Timer control: ${action} for exercise ${exerciseIndex + 1}${duration ? `, duration: ${duration}s` : ''}`);
-                  if (onGuidedActivityStartRef.current && selectedOption?.data?.exercises) {
-                    const exercises = selectedOption.data.exercises;
-                    const completedExercises = exercises.slice(0, exerciseIndex).map((e: any) => e.name);
-                    onGuidedActivityStartRef.current('workout', {
-                      title: selectedOption.data.title || 'Workout',
-                      exercises,
-                      currentExerciseIndex: exerciseIndex,
-                      completedExercises,
-                      isTimerRunning: action === 'start',
-                      isResting: false,
-                      timerDuration: duration
-                    });
-                  }
-                },
-                onRestPeriod: (action, exerciseIndex, duration) => {
-                  console.log(`Rest period: ${action} after exercise ${exerciseIndex + 1}${duration ? `, ${duration}s` : ''}`);
-                  // Track rest state for recovery
-                  if (action === 'start') {
-                    currentRestStateRef.current = { isResting: true, restDuration: duration, exerciseIndex };
-                  } else {
-                    currentRestStateRef.current = null;
-                  }
-                  if (onGuidedActivityStartRef.current && selectedOption?.data?.exercises) {
-                    const exercises = selectedOption.data.exercises;
-                    const completedExercises = exercises.slice(0, exerciseIndex + 1).map((e: any) => e.name);
-                    onGuidedActivityStartRef.current('workout', {
-                      title: selectedOption.data.title || 'Workout',
-                      exercises,
-                      currentExerciseIndex: exerciseIndex,
-                      completedExercises,
-                      isTimerRunning: action === 'start',
-                      isResting: action === 'start',
-                      restDuration: duration,
-                      timerDuration: duration
-                    });
-                  }
-                },
-                onActivityComplete: () => {
-                  console.log('Guided activity completed');
-                  stopGuidanceKeepalive();
-                  currentRestStateRef.current = null; // Clear rest state
-                  // Clear saved guidance state on successful completion
-                  // import('../services/persistenceService').then(({ clearGuidanceState }) => { // Using static import
-                  clearGuidanceState(userId || undefined, activeWorkoutMessageId || undefined)
-                    .catch(e => console.warn('Failed to clear guidance state:', e));
-                  // }).catch(e => console.warn('Failed to import persistence service:', e));
-                  // Don't call onActivityControl('stop') here - executor is already completing,
-                  // and that would cause a circular call loop. Cleanup is handled by stopGuidance().
-                },
-                onProgressUpdate: (progress) => {
-                  // Update context for Gemini awareness
-                  contextRef.current = updateContext(contextRef.current, {
-                    currentWorkoutProgress: {
-                      title: selectedOption.data.title || 'Workout',
-                      totalExercises: progress.totalExercises,
-                      completedCount: progress.currentExerciseIndex,
-                      completedExercises: progress.completedExercises,
-                      remainingExercises: [],
-                      startedAt: Date.now() - progress.elapsedTime,
-                      minutesSinceStarted: Math.floor(progress.elapsedTime / 60000)
-                    }
-                  });
-
-                  // Notify parent component to update WorkoutList state
-                  if (onGuidedActivityStartRef.current) {
-                    // This will update App.tsx state which flows to WorkoutList
-                    onGuidedActivityStartRef.current('workout', {
-                      title: selectedOption.data.title || 'Workout',
-                      exercises: selectedOption.data.exercises,
-                      currentExerciseIndex: progress.currentExerciseIndex,
-                      completedExercises: progress.completedExercises
-                    });
-                  }
-                }
-              });
-
-              // Initialize last cue time
-              lastGuidanceCueTimeRef.current = Date.now();
-
-              executor.start();
-
-              // Start keepalive during guidance
-              startGuidanceKeepalive();
-
-              // Initialize workout progress - explicitly set to start of workout
-              if (onGuidedActivityStartRef.current) {
-                onGuidedActivityStartRef.current('workout', {
-                  title: selectedOption.data.title,
-                  exercises: selectedOption.data.exercises,
-                  currentExerciseIndex: 0,  // Explicitly start at first exercise
-                  completedExercises: []     // No exercises completed yet
+              return true;
+            } else if (action === 'start') {
+              if (selectedOption.data?.exercises) {
+                startGuidanceForWorkout('workout', {
+                  title: selectedOption.data.title || 'Workout',
+                  exercises: selectedOption.data.exercises
                 });
+                return true;
               }
+
+              if (!lastTimerRef.current) {
+                if (onVoiceCommandRef.current) {
+                  onVoiceCommandRef.current('CLARIFICATION', "I don't see an active mindful timer to start yet.");
+                }
+                return true;
+              }
+              continueToReadinessCheck = true;
             } else if (action === 'startSolo' && selectedOption.data?.exercises) {
               // Start without guidance - just notify parent
               if (onGuidedActivityStartRef.current) {
@@ -904,7 +894,9 @@ export const useLiveSession = ({
                 onGuidedActivityStartRef.current('workout', selectedOption.data);
               }
             }
-            return true;
+            if (!continueToReadinessCheck) {
+              return true;
+            }
           }
         } else if (selectionResult.confidence === 'medium' && selectionResult.requiresConfirmation) {
           // Ask for confirmation
@@ -931,10 +923,13 @@ export const useLiveSession = ({
       }
     }
 
+    // NOTE: UI/tool decisions (timers, workout lists, dashboards) are surfaced
+    // through the same `renderUI` contract that text chat uses. Live mode
+    // relies on identical `UIComponentData` so Opik can evaluate tool behavior
+    // consistently across both modalities.
+
     // Check for auto-start readiness phrases when workoutList or timer is available
-    const readinessPhrases = ['ready', "i'm ready", "i am ready", "let's go", "lets go", 'go', 'start', 'begin', 'okay start', 'ok start', 'yes', 'yes i am ready'];
-    const lowerTranscript = transcript.toLowerCase().trim();
-    const isReadinessPhrase = readinessPhrases.some(phrase => lowerTranscript.includes(phrase));
+    const isReadinessPhrase = isIntentSafeReadinessUtterance(transcript);
 
     // PRIORITY: If user says ready and we have a recent timer, auto-start guidance for timer
     if (isReadinessPhrase && lastTimerRef.current) {
@@ -944,7 +939,9 @@ export const useLiveSession = ({
         // Check if we need to reconnect first
         const executor = getGuidanceExecutor();
         const progress = executor.getProgress();
-        const hasPausedGuidance = progress.status === 'paused';
+        const hasPausedGuidance =
+          progress.status === 'paused' &&
+          (progress.activityType === 'breathing' || progress.activityType === 'meditation' || progress.activityType === 'timer');
 
         // If guidance is paused and session is disconnected, reconnect first
         if (hasPausedGuidance && !isConnectedRef.current && connectFnRef.current) {
@@ -970,76 +967,7 @@ export const useLiveSession = ({
         console.log('LiveSession: Auto-starting guidance for timer on readiness phrase');
 
         const { activityType, config } = lastTimerRef.current;
-        const guidanceConfig = createGuidanceConfig(activityType, config);
-
-        guidanceExecutorRef.current = executor;
-
-        executor.initialize(guidanceConfig, {
-          onCue: (cue, text) => {
-            console.log(`GuidanceCue [${cue.type}]:`, text);
-            sendGuidanceCueToGemini(text, cue.type);
-          },
-          onExerciseStart: (name, index) => {
-            console.log(`Exercise started: ${name} (${index + 1})`);
-          },
-          onExerciseComplete: (name, index) => {
-            console.log(`Exercise complete: ${name} (${index + 1})`);
-          },
-          onActivityComplete: () => {
-            console.log('Guided activity completed');
-            stopGuidanceKeepalive();
-            isGuidanceActiveRef.current = false;
-            isExpectingGuidanceResponseRef.current = false;
-            lastTimerRef.current = null; // Clear after completion
-            currentRestStateRef.current = null; // Clear rest state
-            // Clear saved guidance state on successful completion
-            // import('../services/persistenceService').then(({ clearGuidanceState }) => { // Using static import
-            clearGuidanceState(userId || undefined, activeWorkoutMessageId || undefined)
-              .catch(e => console.warn('Failed to clear guidance state:', e));
-            // }).catch(e => console.warn('Failed to import persistence service:', e));
-            // Don't call onActivityControl('stop') here - executor is already completing,
-            // and that would cause a circular call loop. Cleanup is handled by stopGuidance().
-          },
-          onProgressUpdate: (progress) => {
-            if (!lastTimerRef.current) {
-              // Timer reference was cleared (e.g., after completion or error); avoid null access
-              return;
-            }
-            // Update context with timer progress
-            contextRef.current = updateContext(contextRef.current, {
-              activeTimer: {
-                label: lastTimerRef.current.label,
-                totalSeconds: lastTimerRef.current.duration,
-                remainingSeconds: progress.remainingTime,
-                isRunning: progress.status === 'active',
-                startedAt: lastTimerRef.current.timestamp || Date.now()
-              }
-            });
-
-            // Notify parent to update timer state
-            if (onGuidedActivityStartRef.current) {
-              onGuidedActivityStartRef.current(activityType, {
-                ...config,
-                currentExerciseIndex: progress.currentExerciseIndex,
-                completedExercises: progress.completedExercises
-              });
-            }
-          }
-        });
-
-        executor.start();
-        isGuidanceActiveRef.current = true;
-        isExpectingGuidanceResponseRef.current = true;
-        lastGuidanceCueTimeRef.current = Date.now();
-        startGuidanceKeepalive();
-
-        // Notify parent to update timer state
-        if (onGuidedActivityStartRef.current) {
-          onGuidedActivityStartRef.current(activityType, config);
-        }
-
-        // Clear timer ref to prevent duplicate starts
-        lastTimerRef.current = null;
+        startGuidanceForTimer(activityType, config);
 
         return true; // Handled
       }
@@ -1089,172 +1017,10 @@ export const useLiveSession = ({
         }
 
         console.log('LiveSession: Auto-starting guidance on readiness phrase');
-
-        // Update lastWorkoutListRef to point to the workout we're using
-        // This ensures all callbacks have access to the correct workout data
-        lastWorkoutListRef.current = workoutToUse;
-
-        const config = createGuidanceConfig('workout', {
+        startGuidanceForWorkout('workout', {
           title: workoutToUse.title,
-          exercises: workoutToUse.exercises,
-          pace: 'normal'
-        });
-
-        executor.initialize(config, {
-          onCue: (cue, text) => {
-            console.log(`GuidanceCue [${cue.type}]:`, text);
-            sendGuidanceCueToGemini(text, cue.type);
-          },
-          onExerciseStart: (name, index) => {
-            console.log(`Exercise started: ${name} (${index + 1}/${workoutToUse.exercises.length || '?'})`);
-            // Update WorkoutList to show current active exercise
-            if (onGuidedActivityStartRef.current && workoutToUse) {
-              // When exercise starts, all PREVIOUS exercises are completed
-              const completedExercises = workoutToUse.exercises
-                .slice(0, index)  // Exercises before current index
-                .map((e: any) => e.name);
-
-              onGuidedActivityStartRef.current('workout', {
-                title: workoutToUse.title,
-                exercises: workoutToUse.exercises,
-                currentExerciseIndex: index,  // Current exercise index (0-based)
-                completedExercises            // All prior exercises
-              });
-            }
-          },
-          onExerciseComplete: (name, index) => {
-            console.log(`Exercise complete: ${name} (${index + 1}/${workoutToUse.exercises.length || '?'})`);
-            // Immediately update parent with completed exercise for instant UI sync
-            if (onGuidedActivityStartRef.current && workoutToUse) {
-              // When exercise completes, include it in completed list
-              const completedExercises = workoutToUse.exercises
-                .slice(0, index + 1)  // Current exercise is now completed
-                .map((e: any) => e.name);
-
-              onGuidedActivityStartRef.current('workout', {
-                title: workoutToUse.title,
-                exercises: workoutToUse.exercises,
-                currentExerciseIndex: index + 1, // Move to next exercise
-                completedExercises
-              });
-            }
-          },
-          onActivityComplete: async () => {
-            console.log('Guided activity completed');
-            stopGuidanceKeepalive();
-            isGuidanceActiveRef.current = false;
-            isExpectingGuidanceResponseRef.current = false;
-            lastWorkoutListRef.current = null; // Clear after completion
-            currentRestStateRef.current = null; // Clear rest state
-            // Clear saved guidance state on successful completion
-            // import('../services/persistenceService').then(({ clearGuidanceState }) => { // Using static import
-            clearGuidanceState(userId || undefined, activeWorkoutMessageId || undefined)
-              .catch(e => console.warn('Failed to clear guidance state:', e));
-            // }).catch(e => console.warn('Failed to import persistence service:', e));
-            // Don't call onActivityControl('stop') here - executor is already completing,
-            // and that would cause a circular call loop. Cleanup is handled by stopGuidance().
-          },
-          onTimerControl: (action, exerciseIndex, duration) => {
-            console.log(`Timer control: ${action} for exercise ${exerciseIndex + 1}${duration ? `, duration: ${duration}s` : ''}`);
-            // Update workout progress with timer state
-            if (onGuidedActivityStartRef.current && lastWorkoutListRef.current) {
-              const completedExercises = lastWorkoutListRef.current.exercises
-                .slice(0, exerciseIndex)
-                .map((e: any) => e.name);
-
-              onGuidedActivityStartRef.current('workout', {
-                title: lastWorkoutListRef.current.title,
-                exercises: lastWorkoutListRef.current.exercises,
-                currentExerciseIndex: exerciseIndex,
-                completedExercises,
-                isTimerRunning: action === 'start',
-                isResting: false, // Exercise timer, not rest
-                timerDuration: duration
-              });
-            }
-          },
-          onRestPeriod: (action, exerciseIndex, duration) => {
-            console.log(`Rest period: ${action} after exercise ${exerciseIndex + 1}${duration ? `, ${duration}s` : ''}`);
-            // Track rest state for recovery
-            if (action === 'start') {
-              currentRestStateRef.current = { isResting: true, restDuration: duration, exerciseIndex };
-            } else {
-              currentRestStateRef.current = null;
-            }
-            // Update workout progress with rest state
-            if (onGuidedActivityStartRef.current && lastWorkoutListRef.current) {
-              const completedExercises = lastWorkoutListRef.current.exercises
-                .slice(0, exerciseIndex + 1) // Current exercise is done during rest
-                .map((e: any) => e.name);
-
-              onGuidedActivityStartRef.current('workout', {
-                title: lastWorkoutListRef.current.title,
-                exercises: lastWorkoutListRef.current.exercises,
-                currentExerciseIndex: exerciseIndex,
-                completedExercises,
-                isTimerRunning: action === 'start', // Timer runs during rest
-                isResting: action === 'start',
-                restDuration: duration,
-                timerDuration: duration
-              });
-            }
-          },
-          onProgressUpdate: (progress) => {
-            // Update context with progress for Gemini awareness
-            contextRef.current = updateContext(contextRef.current, {
-              currentWorkoutProgress: {
-                title: lastWorkoutListRef.current!.title,
-                totalExercises: progress.totalExercises,
-                completedCount: progress.currentExerciseIndex,
-                completedExercises: progress.completedExercises,
-                remainingExercises: [],
-                startedAt: Date.now() - progress.elapsedTime,
-                minutesSinceStarted: Math.floor(progress.elapsedTime / 60000)
-              }
-            });
-
-            // Notify parent to update WorkoutList component state
-            if (onGuidedActivityStartRef.current) {
-              onGuidedActivityStartRef.current('workout', {
-                title: lastWorkoutListRef.current!.title,
-                exercises: lastWorkoutListRef.current!.exercises,
-                currentExerciseIndex: progress.currentExerciseIndex,
-                completedExercises: progress.completedExercises
-              });
-            }
-          }
-        });
-
-        guidanceExecutorRef.current = executor;
-        lastGuidanceCueTimeRef.current = Date.now();
-
-        // Initialize workout progress BEFORE starting executor
-        // This ensures WorkoutList shows correct state from the beginning
-        if (onGuidedActivityStartRef.current && lastWorkoutListRef.current) {
-          onGuidedActivityStartRef.current('workout', {
-            title: lastWorkoutListRef.current.title,
-            exercises: lastWorkoutListRef.current.exercises,
-            currentExerciseIndex: 0,  // Starting at first exercise
-            completedExercises: []     // No exercises completed yet
-          });
-        }
-
-        // Restore detailed executor state if available (for seamless resume)
-        const detailedState = loadGuidanceExecutorState(); // Synchronous load from localStorage
-        if (detailedState) {
-          getGuidanceExecutor().restoreDetailedState(detailedState);
-          console.log('LiveSession: Restored detailed executor state for seamless resume');
-        }
-
-        executor.start();
-        isGuidanceActiveRef.current = true;
-        isExpectingGuidanceResponseRef.current = true;
-        startGuidanceKeepalive();
-
-        // NOTE: DO NOT clear lastWorkoutListRef here!
-        // The callbacks (onExerciseStart, onExerciseComplete, onProgressUpdate) 
-        // need this ref to access workout data. It's cleared in onActivityComplete.
-
+          exercises: workoutToUse.exercises
+        }, { attemptRestoreDetailedState: true });
         return true; // Handled
       }
     }
@@ -1350,7 +1116,6 @@ export const useLiveSession = ({
       const executor = getGuidanceExecutor();
       executor.skip();
 
-      if (onActivityControlRef.current) onActivityControlRef.current('skip');
       if (onVoiceCommandRef.current) onVoiceCommandRef.current(result.action, result.response);
       return true;
     }
@@ -1359,7 +1124,6 @@ export const useLiveSession = ({
       const executor = getGuidanceExecutor();
       executor.goBack();
 
-      if (onActivityControlRef.current) onActivityControlRef.current('back');
       if (onVoiceCommandRef.current) onVoiceCommandRef.current(result.action, result.response);
       return true;
     }
@@ -1449,6 +1213,17 @@ export const useLiveSession = ({
 
     try {
       console.log("Initializing Live Session...");
+      liveSessionMetaRef.current = {
+        sessionId: (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
+          ? crypto.randomUUID()
+          : `live_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
+        startedAt: Date.now(),
+        userMessageCount: 0,
+        aiMessageCount: 0,
+        lastUserMessage: '',
+        lastAiMessage: ''
+      };
+      liveSessionLoggedRef.current = false;
       setErrorMessage(null);
       manualDisconnectRef.current = false;
       wsClosingHandledRef.current = false;
@@ -1585,6 +1360,57 @@ export const useLiveSession = ({
 
                 // Process saved state if found
                 if (savedGuidanceState || savedExecutorState) {
+                  const savedType = savedGuidanceState?.activityType;
+                  const hasSavedMindful =
+                    savedGuidanceState &&
+                    (savedType === 'breathing' || savedType === 'meditation' || savedType === 'timer') &&
+                    savedGuidanceState.status !== 'completed';
+
+                  if (hasSavedMindful) {
+                    const contextTimer = contextRef.current?.activeTimer;
+                    if (!lastTimerRef.current) {
+                      const restoredLabel = contextTimer?.label || (savedType === 'breathing' ? 'Breathing Practice' : 'Guided Meditation');
+                      const restoredDuration = contextTimer?.totalSeconds || 300;
+                      const restoredConfig: any = {
+                        duration: restoredDuration,
+                        durationMinutes: Math.max(1, Math.floor(restoredDuration / 60)),
+                        label: restoredLabel,
+                        guidanceStyle: 'light',
+                        intent: savedType === 'breathing' ? 'breathing_reset' : 'deep_meditation'
+                      };
+                      if (savedType === 'breathing') {
+                        restoredConfig.pattern = { name: 'box', cycles: Math.max(1, Math.floor(restoredDuration / 60)) };
+                      }
+                      lastTimerRef.current = {
+                        label: restoredLabel,
+                        duration: restoredDuration,
+                        activityType: savedType as string,
+                        config: restoredConfig,
+                        timestamp: Date.now()
+                      };
+                      saveWorkoutRefs({
+                        workoutListsMap: Array.from(workoutListsMapRef.current.entries()),
+                        lastWorkoutList: lastWorkoutListRef.current,
+                        lastTimer: lastTimerRef.current
+                      });
+                    }
+
+                    clearAutoReconnectState();
+                    setTimeout(() => {
+                      if (sess && isSessionReadyRef.current) {
+                        const remaining = contextTimer?.remainingSeconds;
+                        const remainingText = typeof remaining === 'number'
+                          ? ` with about ${Math.max(1, Math.round(remaining / 60))} minute${Math.max(1, Math.round(remaining / 60)) === 1 ? '' : 's'} left`
+                          : '';
+                        const resumePrompt = `[SYSTEM NOTE: The user was disconnected during a ${savedType} session${remainingText}. Briefly acknowledge reconnection and ask if they'd like to resume now.]`;
+                        sess.sendClientContent({
+                          turns: [{ role: 'user', parts: [{ text: resumePrompt }] }],
+                          turnComplete: true
+                        });
+                      }
+                    }, 1500);
+                  }
+
                   // Check for resumable workout from context or saved state
                   const context = contextRef.current;
                   // Handle both workout progress formats: with exercises array or summary format
@@ -1593,7 +1419,8 @@ export const useLiveSession = ({
                     (contextWorkout.exercises && Array.isArray(contextWorkout.exercises) && contextWorkout.exercises.length > 0) ||
                     (contextWorkout.totalExercises && contextWorkout.totalExercises > 0)
                   );
-                  const hasSavedGuidance = savedGuidanceState && savedGuidanceState.activityType === 'workout';
+                  const hasSavedGuidance = savedGuidanceState &&
+                    (savedGuidanceState.activityType === 'workout' || savedGuidanceState.activityType === 'stretching');
 
                   if (hasContextWorkout || hasSavedGuidance) {
                     // Create progress object - handle both formats
@@ -1624,9 +1451,11 @@ export const useLiveSession = ({
                       setTimeout(() => {
                         if (sess && isSessionReadyRef.current) {
                           const wasDisconnected = hasSavedGuidance && savedGuidanceState.status !== 'completed';
+                          const isStretching = savedGuidanceState?.activityType === 'stretching';
+                          const sessionLabel = isStretching ? 'stretching session' : 'workout';
                           const resumePrompt = wasDisconnected
-                            ? `[SYSTEM NOTE: The user was disconnected during their workout "${progress.title || 'Workout'}" with ${completedCount}/${totalCount} exercises completed. Briefly acknowledge the reconnection and ask if they'd like to resume from exercise ${completedCount + 1} or start fresh.]`
-                            : `[SYSTEM NOTE: The user has an in-progress workout "${progress.title}" with ${completedCount}/${totalCount} exercises completed. Ask if they'd like to resume or start fresh.]`;
+                            ? `[SYSTEM NOTE: The user was disconnected during their ${sessionLabel} "${progress.title || (isStretching ? 'Stretching Session' : 'Workout')}" with ${completedCount}/${totalCount} exercises completed. Briefly acknowledge the reconnection and ask if they'd like to resume from exercise ${completedCount + 1} or start fresh.]`
+                            : `[SYSTEM NOTE: The user has an in-progress ${sessionLabel} "${progress.title}" with ${completedCount}/${totalCount} exercises completed. Ask if they'd like to resume or start fresh.]`;
                           sess.sendClientContent({
                             turns: [{ role: 'user', parts: [{ text: resumePrompt }] }],
                             turnComplete: true
@@ -1779,6 +1608,25 @@ export const useLiveSession = ({
                         if (args.type === 'timer') {
                           enhancedProps = normalizeTimerProps(enhancedProps, lastUserMessageRef.current);
                         }
+                        if (args.type === 'workoutList' && enhancedProps?.exercises) {
+                          try {
+                            const pool = await getExercisePool();
+                            const normalizedWorkout = composePhysicalWorkoutFromRequest({
+                              title: enhancedProps.title,
+                              exercises: enhancedProps.exercises,
+                              durationMinutes: typeof enhancedProps.durationMinutes === 'number' ? enhancedProps.durationMinutes : undefined,
+                              focus: lastUserMessageRef.current
+                            }, pool, {
+                              healthConditions: contextRef.current?.onboardingState?.healthConditions || []
+                            });
+                            enhancedProps = {
+                              ...enhancedProps,
+                              ...normalizedWorkout
+                            };
+                          } catch (e) {
+                            console.warn('LiveSession: Failed to normalize workoutList from exercise DB:', e);
+                          }
+                        }
                         const voiceOptions = toolResult.voiceOptions;
 
                         if (toolResult.wasEnhanced) {
@@ -1802,10 +1650,10 @@ export const useLiveSession = ({
                         }
 
                         // Track workoutList for auto-start detection and dynamic updates
-                        if (args.type === 'workoutList' && args.props?.exercises) {
+                        if (args.type === 'workoutList' && enhancedProps?.exercises) {
                           const workoutData = {
-                            exercises: args.props.exercises,
-                            title: args.props.title || 'Workout',
+                            exercises: enhancedProps.exercises,
+                            title: enhancedProps.title || 'Workout',
                             timestamp: Date.now()
                           };
 
@@ -1823,7 +1671,8 @@ export const useLiveSession = ({
                           // import('../services/persistenceService').then(({ saveWorkoutRefs }) => { // Using static import
                           saveWorkoutRefs({
                             workoutListsMap: Array.from(workoutListsMapRef.current.entries()),
-                            lastWorkoutList: lastWorkoutListRef.current
+                            lastWorkoutList: lastWorkoutListRef.current,
+                            lastTimer: lastTimerRef.current
                           });
                           // }).catch(e => console.warn('Failed to save workout refs:', e));
 
@@ -1834,32 +1683,24 @@ export const useLiveSession = ({
 
                         // Track timer for auto-start detection
                         if (args.type === 'timer' && enhancedProps) {
-                          const label = enhancedProps.label || 'Timer';
-                          const duration = enhancedProps.duration ?? 60;
+                          const mindful = buildMindfulTimerActivity(enhancedProps);
 
-                          // Derive activity type from label
-                          const labelLower = label.toLowerCase();
-                          const isBreathing = labelLower.includes('breathing') || labelLower.includes('breath');
-                          const isMeditation = labelLower.includes('meditation') || labelLower.includes('mindful');
-
-                          if (isBreathing || isMeditation) {
-                            const activityType = isBreathing ? 'breathing' : 'meditation';
-                            const config = {
-                              duration: duration,
-                              durationMinutes: Math.floor(duration / 60),
-                              label: label,
-                              ...(isBreathing && { pattern: { name: 'box', cycles: Math.floor(duration / 60) } })
-                            };
-
+                          if (mindful) {
                             lastTimerRef.current = {
-                              label,
-                              duration,
-                              activityType,
-                              config,
+                              label: mindful.config.label,
+                              duration: mindful.config.duration,
+                              activityType: mindful.activityType,
+                              config: mindful.config,
                               timestamp: Date.now()
                             };
 
-                            console.log('LiveSession: Tracked timer for auto-start detection:', activityType);
+                            saveWorkoutRefs({
+                              workoutListsMap: Array.from(workoutListsMapRef.current.entries()),
+                              lastWorkoutList: lastWorkoutListRef.current,
+                              lastTimer: lastTimerRef.current
+                            });
+
+                            console.log('LiveSession: Tracked timer for auto-start detection:', mindful.activityType);
                           }
                         }
 
@@ -1895,135 +1736,96 @@ export const useLiveSession = ({
                     // Handle guided activity start
                     else if (fc.name === 'startGuidedActivity') {
                       const args = fc.args as any;
+                      const activityType = args.activityType as string;
 
-                      // Notify parent component
-                      if (onGuidedActivityStartRef.current) {
-                        onGuidedActivityStartRef.current(args.activityType, args);
+                      if (activityType === 'breathing' || activityType === 'meditation' || activityType === 'timer') {
+                        startGuidanceForTimer(activityType, args);
+                        sessionPromise.then(sess => {
+                          if (isConnectedRef.current) {
+                            sess.sendToolResponse({
+                              functionResponses: [{
+                                id: fc.id,
+                                name: fc.name,
+                                response: { result: `Started ${activityType} activity` }
+                              }]
+                            });
+                          }
+                        });
+                        continue;
                       }
 
-                      // Initialize and start the guidance executor
-                      const guidanceConfig = createGuidanceConfig(args.activityType, args);
-                      const executor = getGuidanceExecutor();
+                      const physicalType = args.activityType === 'stretching' ? 'stretching' : 'workout';
+                      const now = Date.now();
+                      const activeWorkoutFromMap =
+                        activeWorkoutMessageId &&
+                        workoutListsMapRef.current.has(activeWorkoutMessageId)
+                          ? workoutListsMapRef.current.get(activeWorkoutMessageId)
+                          : null;
+                      const recentActiveWorkout =
+                        activeWorkoutFromMap && now - activeWorkoutFromMap.timestamp < 90_000
+                          ? activeWorkoutFromMap
+                          : null;
+                      const fallbackWorkout =
+                        lastWorkoutListRef.current && now - lastWorkoutListRef.current.timestamp < 90_000
+                          ? lastWorkoutListRef.current
+                          : null;
+                      const requestedExercises = Array.isArray(args.exercises) ? args.exercises : [];
+                      const sourceExercises =
+                        requestedExercises.length > 0
+                          ? requestedExercises
+                          : recentActiveWorkout?.exercises || fallbackWorkout?.exercises || [];
+                      const sourceTitle =
+                        args.title ||
+                        recentActiveWorkout?.title ||
+                        fallbackWorkout?.title ||
+                        (physicalType === 'stretching' ? 'Stretching Session' : 'Workout Session');
 
-                      // Store reference for external control
-                      guidanceExecutorRef.current = executor;
-
-                      executor.initialize(guidanceConfig, {
-                        onCue: (cue, text) => {
-                          console.log(`GuidanceCue [${cue.type}]:`, text);
-                          sendGuidanceCueToGemini(text, cue.type);
-                        },
-                        onExerciseStart: (name, index) => {
-                          console.log(`Exercise started: ${name} (${index + 1}/${args.exercises?.length || '?'})`);
-                          // Update WorkoutList to show current active exercise
-                          if (onGuidedActivityStartRef.current && args.exercises) {
-                            const completedExercises = args.exercises.slice(0, index).map((e: any) => e.name);
-                            onGuidedActivityStartRef.current('workout', {
-                              title: args.title || 'Workout',
-                              exercises: args.exercises,
-                              currentExerciseIndex: index,
-                              completedExercises,
-                              isTimerRunning: false // Timer starts on "Go!" cue
-                            });
-                          }
-                        },
-                        onExerciseComplete: (name, index) => {
-                          console.log(`Exercise complete: ${name} (${index + 1}/${args.exercises?.length || '?'})`);
-                          // Update parent with exercise completion for UI sync
-                          if (onGuidedActivityStartRef.current && args.exercises) {
-                            const completedExercises = args.exercises.slice(0, index + 1).map((e: any) => e.name);
-                            onGuidedActivityStartRef.current('workout', {
-                              title: args.title || 'Workout',
-                              exercises: args.exercises,
-                              currentExerciseIndex: index + 1,
-                              completedExercises,
-                              isTimerRunning: false // Timer stops when exercise completes
-                            });
-                          }
-                        },
-                        onTimerControl: (action, exerciseIndex, duration) => {
-                          console.log(`Timer control: ${action} for exercise ${exerciseIndex + 1}${duration ? `, duration: ${duration}s` : ''}`);
-                          if (onGuidedActivityStartRef.current && args.exercises) {
-                            const completedExercises = args.exercises.slice(0, exerciseIndex).map((e: any) => e.name);
-                            onGuidedActivityStartRef.current('workout', {
-                              title: args.title || 'Workout',
-                              exercises: args.exercises,
-                              currentExerciseIndex: exerciseIndex,
-                              completedExercises,
-                              isTimerRunning: action === 'start',
-                              isResting: false,
-                              timerDuration: duration
-                            });
-                          }
-                        },
-                        onRestPeriod: (action, exerciseIndex, duration) => {
-                          console.log(`Rest period: ${action} after exercise ${exerciseIndex + 1}${duration ? `, ${duration}s` : ''}`);
-                          // Track rest state for recovery
-                          if (action === 'start') {
-                            currentRestStateRef.current = { isResting: true, restDuration: duration, exerciseIndex };
-                          } else {
-                            currentRestStateRef.current = null;
-                          }
-                          if (onGuidedActivityStartRef.current && args.exercises) {
-                            const completedExercises = args.exercises.slice(0, exerciseIndex + 1).map((e: any) => e.name);
-                            onGuidedActivityStartRef.current('workout', {
-                              title: args.title || 'Workout',
-                              exercises: args.exercises,
-                              currentExerciseIndex: exerciseIndex,
-                              completedExercises,
-                              isTimerRunning: action === 'start',
-                              isResting: action === 'start',
-                              restDuration: duration,
-                              timerDuration: duration
-                            });
-                          }
-                        },
-                        onActivityComplete: () => {
-                          console.log('Guided activity completed');
-                          stopGuidanceKeepalive();
-                          // Reset guidance state flags
-                          isGuidanceActiveRef.current = false;
-                          isExpectingGuidanceResponseRef.current = false;
-                          currentRestStateRef.current = null; // Clear rest state
-                          // Clear saved guidance state on successful completion
-                          // import('../services/persistenceService').then(({ clearGuidanceState }) => { // Using static import
-                          clearGuidanceState(userId || undefined, activeWorkoutMessageId || undefined)
-                            .catch(e => console.warn('Failed to clear guidance state:', e));
-                          // }).catch(e => console.warn('Failed to import persistence service:', e));
-                          // Call onActivityControl('stop') for UI cleanup - safe now because stopGuidance()
-                          // checks executor status and won't call stop() if already completed
-                          if (onActivityControlRef.current) {
-                            onActivityControlRef.current('stop');
-                          }
-                        },
-                        onProgressUpdate: (progress) => {
-                          // Update context with progress
-                          contextRef.current = updateContext(contextRef.current, {
-                            currentWorkoutProgress: {
-                              title: args.title || args.activityType,
-                              totalExercises: progress.totalExercises,
-                              completedCount: progress.currentExerciseIndex,
-                              completedExercises: progress.completedExercises,
-                              remainingExercises: [],
-                              startedAt: Date.now() - progress.elapsedTime,
-                              minutesSinceStarted: Math.floor(progress.elapsedTime / 60000)
-                            }
-                          });
+                      if (!Array.isArray(sourceExercises) || sourceExercises.length === 0) {
+                        if (onVoiceCommandRef.current) {
+                          onVoiceCommandRef.current(
+                            'CLARIFICATION',
+                            "I can start as soon as your workout list is ready. I'll generate the list first."
+                          );
                         }
+                        sessionPromise.then(sess => {
+                          if (isConnectedRef.current) {
+                            sess.sendToolResponse({
+                              functionResponses: [{
+                                id: fc.id,
+                                name: fc.name,
+                                response: { result: 'Skipped startGuidedActivity: no workout exercises available yet.' }
+                              }]
+                            });
+                          }
+                        });
+                        continue;
+                      }
+
+                      let normalizedPhysical = {
+                        title: sourceTitle,
+                        exercises: sourceExercises
+                      };
+                      try {
+                        const pool = await getExercisePool();
+                        const composed = composePhysicalWorkoutFromRequest({
+                          title: normalizedPhysical.title,
+                          exercises: normalizedPhysical.exercises,
+                          durationMinutes: typeof args.durationMinutes === 'number' ? args.durationMinutes : undefined,
+                          focus: lastUserMessageRef.current
+                        }, pool, {
+                          healthConditions: contextRef.current?.onboardingState?.healthConditions || []
+                        });
+                        normalizedPhysical = {
+                          title: composed.title,
+                          exercises: composed.exercises
+                        };
+                      } catch (e) {
+                        console.warn('LiveSession: Failed to normalize startGuidedActivity workout from exercise DB:', e);
+                      }
+                      startGuidanceForWorkout(physicalType, {
+                        title: normalizedPhysical.title,
+                        exercises: normalizedPhysical.exercises
                       });
-
-                      // Initialize last cue time
-                      lastGuidanceCueTimeRef.current = Date.now();
-
-                      // Start the executor
-                      executor.start();
-
-                      // Mark guidance as active for message categorization
-                      isGuidanceActiveRef.current = true;
-                      isExpectingGuidanceResponseRef.current = true;
-
-                      // Start keepalive during guidance to prevent disconnection
-                      startGuidanceKeepalive();
 
                       sessionPromise.then(sess => {
                         if (isConnectedRef.current) {
@@ -2031,7 +1833,7 @@ export const useLiveSession = ({
                             functionResponses: [{
                               id: fc.id,
                               name: fc.name,
-                              response: { result: `Started ${args.activityType} activity with ${guidanceConfig.exercises?.length || 0} exercises` }
+                              response: { result: `Started ${args.activityType} activity with ${normalizedPhysical.exercises?.length || 0} exercises` }
                             }]
                           });
                         }
@@ -2053,14 +1855,12 @@ export const useLiveSession = ({
                         if (onActivityControlRef.current) onActivityControlRef.current('resume');
                       } else if (action === 'skip') {
                         executor.skip();
-                        if (onActivityControlRef.current) onActivityControlRef.current('skip');
                       } else if (action === 'stop') {
                         executor.stop();
                         stopGuidanceKeepalive();
                         if (onActivityControlRef.current) onActivityControlRef.current('stop');
                       } else if (action === 'back') {
                         executor.goBack();
-                        if (onActivityControlRef.current) onActivityControlRef.current('back');
                       }
 
                       // Handle pace changes
@@ -2177,6 +1977,10 @@ export const useLiveSession = ({
                     timestamp: Date.now(),
                     isFinal
                   });
+                  if (isFinal && liveSessionMetaRef.current) {
+                    liveSessionMetaRef.current.userMessageCount += 1;
+                    liveSessionMetaRef.current.lastUserMessage = transcript;
+                  }
 
                   // Check for voice commands first
                   const commandHandled = handleVoiceCommand(transcript);
@@ -2236,6 +2040,10 @@ export const useLiveSession = ({
                       timestamp: Date.now(),
                       isFinal: true
                     });
+                    if (liveSessionMetaRef.current) {
+                      liveSessionMetaRef.current.aiMessageCount += 1;
+                      liveSessionMetaRef.current.lastAiMessage = aiText;
+                    }
                   }
                 }
 
@@ -2544,65 +2352,290 @@ export const useLiveSession = ({
     }
   }, [status, connect]);
 
-  const startGuidanceForTimer = useCallback((activityType: string, config: any) => {
-    // Start guidance for timer activity if not already started
+  const startGuidanceForWorkout = useCallback((
+    activityType: 'workout' | 'stretching',
+    workout: { title: string; exercises: any[] },
+    options?: { attemptRestoreDetailedState?: boolean }
+  ) => {
     const executor = getGuidanceExecutor();
     const progress = executor.getProgress();
+    guidanceExecutorRef.current = executor;
 
-    if (progress.status === 'idle') {
-      const guidanceConfig = createGuidanceConfig(activityType, config);
-      guidanceExecutorRef.current = executor;
+    if (progress.status === 'active' && progress.activityType === activityType) {
+      return;
+    }
 
-      executor.initialize(guidanceConfig, {
-        onCue: (cue, text) => {
-          console.log(`GuidanceCue [${cue.type}]:`, text);
-          sendGuidanceCueToGemini(text, cue.type);
-        },
-        onExerciseStart: (name, index) => {
-          console.log(`Exercise started: ${name} (${index + 1})`);
-        },
-        onExerciseComplete: (name, index) => {
-          console.log(`Exercise complete: ${name} (${index + 1})`);
-        },
-        onActivityComplete: async () => {
-          console.log('Guided activity completed');
-          stopGuidanceKeepalive();
-          isGuidanceActiveRef.current = false;
-          isExpectingGuidanceResponseRef.current = false;
-          currentRestStateRef.current = null; // Clear rest state
-          // Clear saved guidance state on successful completion
-          // import('../services/persistenceService').then(({ clearGuidanceState }) => { // Using static import
-          clearGuidanceState(userId || undefined, activeWorkoutMessageId || undefined)
-            .catch(e => console.warn('Failed to clear guidance state:', e));
-          // }).catch(e => console.warn('Failed to import persistence service:', e));
-          // Don't call onActivityControl('stop') here - executor is already completing,
-          // and that would cause a circular call loop. Cleanup is handled by stopGuidance().
-        },
-        onProgressUpdate: (progress) => {
-          // Update context with progress if needed
-          contextRef.current = updateContext(contextRef.current, {
-            activeTimer: {
-              label: config.label || activityType,
-              totalSeconds: config.duration || config.durationMinutes * 60 || 300,
-              remainingSeconds: progress.remainingTime,
-              isRunning: progress.status === 'active',
-              startedAt: Date.now() // Timer start time
-            }
+    if (progress.status === 'paused' && progress.activityType === activityType) {
+      resumeGuidance();
+      return;
+    }
+
+    if (progress.status !== 'idle') {
+      executor.stop();
+    }
+
+    const normalizedWorkout = {
+      title: workout.title || (activityType === 'stretching' ? 'Stretching' : 'Workout'),
+      exercises: Array.isArray(workout.exercises) ? workout.exercises : []
+    };
+
+    if (normalizedWorkout.exercises.length === 0) {
+      return;
+    }
+
+    lastWorkoutListRef.current = {
+      exercises: normalizedWorkout.exercises,
+      title: normalizedWorkout.title,
+      timestamp: Date.now(),
+      messageId: lastWorkoutListRef.current?.messageId
+    };
+
+    const config = createGuidanceConfig(activityType, {
+      title: normalizedWorkout.title,
+      exercises: normalizedWorkout.exercises,
+      pace: 'normal'
+    });
+
+    executor.initialize(config, {
+      onCue: (cue, text) => {
+        console.log(`GuidanceCue [${cue.type}]:`, text);
+        sendGuidanceCueToGemini(text, cue.type);
+      },
+      onExerciseStart: (name, index) => {
+        console.log(`Exercise started: ${name} (${index + 1}/${normalizedWorkout.exercises.length || '?'})`);
+        const completedExercises = normalizedWorkout.exercises.slice(0, index).map((e: any) => e.name);
+        if (onGuidedActivityStartRef.current) {
+          const completedExerciseIndices = Array.from({ length: index }, (_, i) => i);
+          onGuidedActivityStartRef.current(activityType, {
+            title: normalizedWorkout.title,
+            exercises: normalizedWorkout.exercises,
+            currentExerciseIndex: index,
+            completedExercises,
+            completedExerciseIndices,
+            isTimerRunning: false
           });
         }
-      });
+      },
+      onExerciseComplete: (name, index) => {
+        console.log(`Exercise complete: ${name} (${index + 1}/${normalizedWorkout.exercises.length || '?'})`);
+        const completedExercises = normalizedWorkout.exercises.slice(0, index + 1).map((e: any) => e.name);
+        if (onGuidedActivityStartRef.current) {
+          const completedExerciseIndices = Array.from({ length: index + 1 }, (_, i) => i);
+          onGuidedActivityStartRef.current(activityType, {
+            title: normalizedWorkout.title,
+            exercises: normalizedWorkout.exercises,
+            currentExerciseIndex: index + 1,
+            completedExercises,
+            completedExerciseIndices,
+            isTimerRunning: false
+          });
+        }
+      },
+      onTimerControl: (action, exerciseIndex, duration) => {
+        console.log(`Timer control: ${action} for exercise ${exerciseIndex + 1}${duration ? `, duration: ${duration}s` : ''}`);
+        const completedExercises = normalizedWorkout.exercises.slice(0, exerciseIndex).map((e: any) => e.name);
+        if (onGuidedActivityStartRef.current) {
+          const completedExerciseIndices = Array.from({ length: exerciseIndex }, (_, i) => i);
+          onGuidedActivityStartRef.current(activityType, {
+            title: normalizedWorkout.title,
+            exercises: normalizedWorkout.exercises,
+            currentExerciseIndex: exerciseIndex,
+            completedExercises,
+            completedExerciseIndices,
+            isTimerRunning: action === 'start',
+            isResting: false,
+            timerDuration: duration
+          });
+        }
+      },
+      onRestPeriod: (action, exerciseIndex, duration) => {
+        console.log(`Rest period: ${action} after exercise ${exerciseIndex + 1}${duration ? `, ${duration}s` : ''}`);
+        if (action === 'start') {
+          currentRestStateRef.current = { isResting: true, restDuration: duration, exerciseIndex };
+        } else {
+          currentRestStateRef.current = null;
+        }
+        const completedCount = action === 'start' ? exerciseIndex + 1 : exerciseIndex;
+        const completedExercises = normalizedWorkout.exercises
+          .slice(0, Math.max(0, completedCount))
+          .map((e: any) => e.name);
+        if (onGuidedActivityStartRef.current) {
+          const completedExerciseIndices = Array.from({ length: Math.max(0, completedCount) }, (_, i) => i);
+          onGuidedActivityStartRef.current(activityType, {
+            title: normalizedWorkout.title,
+            exercises: normalizedWorkout.exercises,
+            currentExerciseIndex: exerciseIndex,
+            completedExercises,
+            completedExerciseIndices,
+            isTimerRunning: action === 'start',
+            isResting: action === 'start',
+            restDuration: duration,
+            timerDuration: duration
+          });
+        }
+      },
+      onActivityComplete: async () => {
+        console.log('Guided activity completed');
+        stopGuidanceKeepalive();
+        isGuidanceActiveRef.current = false;
+        isExpectingGuidanceResponseRef.current = false;
+        currentRestStateRef.current = null;
+        lastWorkoutListRef.current = null;
+        clearGuidanceState(userId || undefined, activeWorkoutMessageId || undefined)
+          .catch(e => console.warn('Failed to clear guidance state:', e));
+        if (onActivityControlRef.current) {
+          onActivityControlRef.current('stop');
+        }
+      },
+      onProgressUpdate: (currentProgress) => {
+        contextRef.current = updateContext(contextRef.current, {
+          currentWorkoutProgress: {
+            title: normalizedWorkout.title,
+            totalExercises: currentProgress.totalExercises,
+            completedCount: currentProgress.currentExerciseIndex,
+            completedExercises: currentProgress.completedExercises,
+            remainingExercises: [],
+            startedAt: Date.now() - currentProgress.elapsedTime,
+            minutesSinceStarted: Math.floor(currentProgress.elapsedTime / 60000)
+          }
+        });
 
-      executor.start();
-      isGuidanceActiveRef.current = true;
-      isExpectingGuidanceResponseRef.current = true;
-      lastGuidanceCueTimeRef.current = Date.now();
-      startGuidanceKeepalive();
-      console.log('LiveSession: Started guidance for timer activity');
-    } else {
-      // Already initialized, just resume
-      resumeGuidance();
+        if (onGuidedActivityStartRef.current) {
+          const completedExerciseIndices = Array.from(
+            { length: currentProgress.currentExerciseIndex },
+            (_, i) => i
+          );
+          onGuidedActivityStartRef.current(activityType, {
+            title: normalizedWorkout.title,
+            exercises: normalizedWorkout.exercises,
+            currentExerciseIndex: currentProgress.currentExerciseIndex,
+            completedExercises: currentProgress.completedExercises,
+            completedExerciseIndices
+          });
+        }
+      }
+    });
+
+    if (onGuidedActivityStartRef.current) {
+      onGuidedActivityStartRef.current(activityType, {
+        title: normalizedWorkout.title,
+        exercises: normalizedWorkout.exercises,
+        currentExerciseIndex: 0,
+        completedExercises: [],
+        completedExerciseIndices: []
+      });
     }
-  }, [resumeGuidance]);
+
+    if (options?.attemptRestoreDetailedState) {
+      const detailedState = loadGuidanceExecutorState();
+      if (detailedState) {
+        getGuidanceExecutor().restoreDetailedState(detailedState);
+        console.log('LiveSession: Restored detailed executor state for seamless resume');
+      }
+    }
+
+    lastGuidanceCueTimeRef.current = Date.now();
+    executor.start();
+    isGuidanceActiveRef.current = true;
+    isExpectingGuidanceResponseRef.current = true;
+    startGuidanceKeepalive();
+  }, [resumeGuidance, userId, activeWorkoutMessageId, sendGuidanceCueToGemini, startGuidanceKeepalive]);
+
+  const startGuidanceForTimer = useCallback((activityType: string, config: any) => {
+    const executor = getGuidanceExecutor();
+    const progress = executor.getProgress();
+    guidanceExecutorRef.current = executor;
+
+    if (progress.status !== 'idle') {
+      resumeGuidance();
+      return;
+    }
+
+    const duration = config.duration || config.durationSeconds || (config.durationMinutes ? config.durationMinutes * 60 : 300);
+    const durationMinutes = config.durationMinutes || Math.max(1, Math.floor(duration / 60));
+    const label = config.label || activityType;
+    const timerTimestamp = Date.now();
+    const normalizedConfig = {
+      ...config,
+      duration,
+      durationMinutes,
+      label,
+      guidanceStyle: config.guidanceStyle || config.style || config.guidance?.style,
+      intent: config.intent || config.guidance?.intent
+    };
+    const guidanceConfig = createGuidanceConfig(activityType, normalizedConfig);
+
+    executor.initialize(guidanceConfig, {
+      onCue: (cue, text) => {
+        console.log(`GuidanceCue [${cue.type}]:`, text);
+        sendGuidanceCueToGemini(text, cue.type);
+      },
+      onExerciseStart: (name, index) => {
+        console.log(`Exercise started: ${name} (${index + 1})`);
+      },
+      onExerciseComplete: (name, index) => {
+        console.log(`Exercise complete: ${name} (${index + 1})`);
+      },
+      onActivityComplete: async () => {
+        console.log('Guided activity completed');
+        stopGuidanceKeepalive();
+        isGuidanceActiveRef.current = false;
+        isExpectingGuidanceResponseRef.current = false;
+        currentRestStateRef.current = null;
+        lastTimerRef.current = null;
+        saveWorkoutRefs({
+          workoutListsMap: Array.from(workoutListsMapRef.current.entries()),
+          lastWorkoutList: lastWorkoutListRef.current,
+          lastTimer: lastTimerRef.current
+        });
+        clearGuidanceState(userId || undefined, activeWorkoutMessageId || undefined)
+          .catch(e => console.warn('Failed to clear guidance state:', e));
+      },
+      onProgressUpdate: (currentProgress) => {
+        contextRef.current = updateContext(contextRef.current, {
+          activeTimer: {
+            label,
+            totalSeconds: duration,
+            remainingSeconds: currentProgress.remainingTime,
+            isRunning: currentProgress.status === 'active',
+            startedAt: timerTimestamp
+          }
+        });
+
+        if (onGuidedActivityStartRef.current) {
+          onGuidedActivityStartRef.current(activityType, {
+            ...normalizedConfig,
+            currentExerciseIndex: currentProgress.currentExerciseIndex,
+            completedExercises: currentProgress.completedExercises
+          });
+        }
+      }
+    });
+
+    executor.start();
+    isGuidanceActiveRef.current = true;
+    isExpectingGuidanceResponseRef.current = true;
+    lastGuidanceCueTimeRef.current = Date.now();
+    startGuidanceKeepalive();
+    lastTimerRef.current = {
+      label,
+      duration,
+      activityType,
+      config: normalizedConfig,
+      timestamp: timerTimestamp
+    };
+    saveWorkoutRefs({
+      workoutListsMap: Array.from(workoutListsMapRef.current.entries()),
+      lastWorkoutList: lastWorkoutListRef.current,
+      lastTimer: lastTimerRef.current
+    });
+
+    if (onGuidedActivityStartRef.current) {
+      onGuidedActivityStartRef.current(activityType, normalizedConfig);
+    }
+
+    console.log('LiveSession: Started guidance for timer activity');
+  }, [resumeGuidance, userId, activeWorkoutMessageId, sendGuidanceCueToGemini, startGuidanceKeepalive]);
 
   // ──────────────────────────────────────────────────────────────────────────
   // RETURN
@@ -2646,6 +2679,16 @@ export const useLiveSession = ({
       }
     },
     resumeGuidance,
+    skipGuidance: () => {
+      if (guidanceExecutorRef.current) {
+        guidanceExecutorRef.current.skip();
+      }
+    },
+    goBackGuidance: () => {
+      if (guidanceExecutorRef.current) {
+        guidanceExecutorRef.current.goBack();
+      }
+    },
     startGuidanceForTimer,
     stopGuidance: () => {
       if (guidanceExecutorRef.current) {

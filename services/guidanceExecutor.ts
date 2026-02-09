@@ -87,6 +87,7 @@ export class GuidanceExecutor {
     // breathing, meditation, and simple timer activities so they share a single
     // clock with the Timer/Workout UI.
     private tickDriven: boolean = false;
+    private tickActivityId: string | null = null;
     // High-level density control for mindful sessions (mirrors VoiceGuidanceConfig)
     private guidanceStyle: 'full' | 'light' | 'silent' = 'full';
 
@@ -150,6 +151,7 @@ export class GuidanceExecutor {
         // IMPORTANT: Trigger onExerciseStart for the first exercise immediately
         // This ensures the UI knows we're starting at exercise 0
         if (this.exercises.length > 0) {
+            this.initRepTracking(this.exercises[0]);
             this.callbacks?.onExerciseStart(this.exercises[0].name, 0);
         }
 
@@ -286,11 +288,7 @@ export class GuidanceExecutor {
         this.clearScheduledCues();
         this.clearCountdownTimers();
         
-        // Find cues for next exercise
-        const nextExerciseCues = this.cues.filter(c => c.exerciseIndex === this.currentExerciseIndex);
-        if (nextExerciseCues.length > 0) {
-            this.currentCueIndex = this.cues.indexOf(nextExerciseCues[0]);
-        }
+        this.currentCueIndex = this.getCueIndexAfterExerciseStart(this.currentExerciseIndex);
         
         // Announce skip and prepare next exercise
         const nextExercise = this.exercises[this.currentExerciseIndex];
@@ -371,11 +369,7 @@ export class GuidanceExecutor {
         this.clearScheduledCues();
         this.clearCountdownTimers();
         
-        // Find cues for previous exercise
-        const prevExerciseCues = this.cues.filter(c => c.exerciseIndex === this.currentExerciseIndex);
-        if (prevExerciseCues.length > 0) {
-            this.currentCueIndex = this.cues.indexOf(prevExerciseCues[0]);
-        }
+        this.currentCueIndex = this.getCueIndexAfterExerciseStart(this.currentExerciseIndex);
         
         // Announce going back
         const prevExercise = this.exercises[this.currentExerciseIndex];
@@ -607,6 +601,8 @@ export class GuidanceExecutor {
     private startNextExercise(): void {
         const nextExercise = this.exercises[this.currentExerciseIndex];
         if (!nextExercise) return;
+        this.clearScheduledCues();
+        this.currentCueIndex = this.getCueIndexAfterExerciseStart(this.currentExerciseIndex);
         
         // End rest period
         this.callbacks?.onRestPeriod?.('end', this.currentExerciseIndex);
@@ -654,6 +650,10 @@ export class GuidanceExecutor {
                 }
             }, 4000)
         );
+
+        if (this.status === 'active') {
+            this.scheduleRemainingCues();
+        }
     }
     
     /**
@@ -721,9 +721,11 @@ export class GuidanceExecutor {
         if (this.status !== 'active') return;
 
         // Sanity check – only respond to the owning activity
-        if (activityId !== this.activityType && this.activityType !== 'timer') {
-            // For timer/breathing/meditation we usually have a single activity,
-            // so mismatched IDs can be ignored safely.
+        if (!this.tickActivityId) {
+            this.tickActivityId = activityId;
+        }
+        if (this.tickActivityId !== activityId) {
+            return;
         }
 
         const elapsedMs = timer.elapsedSeconds * 1000;
@@ -855,6 +857,7 @@ export class GuidanceExecutor {
      */
     reset(): void {
         this.clearScheduledCues();
+        this.clearCountdownTimers();
         this.stopProgressUpdates();
         this.cues = [];
         this.currentCueIndex = 0;
@@ -864,6 +867,7 @@ export class GuidanceExecutor {
         this.totalPausedDuration = 0;
         this.status = 'idle';
         this.activityType = '';
+        this.tickActivityId = null;
         this.exercises = [];
         this.paceMultiplier = 1.0;
     }
@@ -905,14 +909,19 @@ export class GuidanceExecutor {
         const now = Date.now();
         const elapsed = now - this.startTime - this.totalPausedDuration;
         
-        this.cues.slice(this.currentCueIndex).forEach((cue, relativeIndex) => {
+        const baseCueIndex = this.currentCueIndex;
+        this.cues.slice(baseCueIndex).forEach((cue, relativeIndex) => {
             const adjustedTiming = cue.timing * this.paceMultiplier;
             const delay = adjustedTiming - elapsed;
+            const absoluteIndex = baseCueIndex + relativeIndex;
             
             if (delay > 0) {
                 const timerId = setTimeout(() => {
                     this.executeCue(cue);
-                    this.currentCueIndex = this.currentCueIndex + relativeIndex + 1;
+                    const nextIndex = absoluteIndex + 1;
+                    if (this.currentCueIndex < nextIndex) {
+                        this.currentCueIndex = nextIndex;
+                    }
                 }, delay);
                 
                 this.scheduledCues.push({
@@ -933,6 +942,27 @@ export class GuidanceExecutor {
     private clearCountdownTimers(): void {
         this.countdownTimers.forEach(id => clearTimeout(id));
         this.countdownTimers = [];
+    }
+
+    private getCueIndexAfterExerciseStart(exerciseIndex: number): number {
+        const firstCueForExercise = this.cues.findIndex(c => c.exerciseIndex === exerciseIndex);
+        if (firstCueForExercise === -1) {
+            return this.cues.length;
+        }
+
+        for (let i = firstCueForExercise; i < this.cues.length; i++) {
+            const cue = this.cues[i];
+            if (cue.exerciseIndex !== exerciseIndex) break;
+
+            const lowerText = cue.text.toLowerCase();
+            const isStartCue = cue.type === 'transition' || cue.type === 'count' || lowerText.includes('go!');
+            if (!isStartCue) {
+                return i;
+            }
+        }
+
+        const firstNextExercise = this.cues.findIndex(c => (c.exerciseIndex ?? -1) > exerciseIndex);
+        return firstNextExercise === -1 ? this.cues.length : firstNextExercise;
     }
     
     /**
@@ -1125,11 +1155,13 @@ export function createGuidanceConfig(
     activityType: string,
     args: any
 ): VoiceGuidanceConfig {
+    const guidanceStyle = args.guidanceStyle || args.style || args.guidance?.style;
+    const intent = args.intent || args.guidance?.intent;
     const config: VoiceGuidanceConfig = {
         activity: activityType as any,
         pace: args.pace || 'normal',
-        guidanceStyle: args.guidanceStyle,
-        intent: args.intent
+        guidanceStyle,
+        intent
     };
 
     if (activityType === 'workout' || activityType === 'stretching') {
@@ -1142,17 +1174,28 @@ export function createGuidanceConfig(
     }
 
     if (activityType === 'breathing') {
-        const patternName = args.breathingPattern || args.pattern?.name || 'box';
+        const patternNameRaw = (args.breathingPattern || args.pattern?.name || args.pattern || 'box')
+            .toString()
+            .toLowerCase();
+        const patternName = patternNameRaw === '4-7-8' || patternNameRaw === '478' || patternNameRaw === '4_7_8'
+            ? 'relaxing'
+            : patternNameRaw;
         config.pattern = BREATHING_PATTERNS[patternName] || BREATHING_PATTERNS.box;
+        const seconds = args.durationSeconds || args.duration || (args.durationMinutes ? args.durationMinutes * 60 : undefined);
+        if (seconds) {
+            config.intervals = [{ work: seconds, rest: 0 }];
+        }
     }
 
     if (activityType === 'meditation') {
-        const minutes = args.durationMinutes || (args.duration ? Math.floor(args.duration / 60) : 5);
+        const minutes = args.durationMinutes
+            || (args.durationSeconds ? Math.floor(args.durationSeconds / 60) : undefined)
+            || (args.duration ? Math.floor(args.duration / 60) : 5);
         config.intervals = [{ work: minutes * 60, rest: 0 }];
     }
 
     if (activityType === 'timer') {
-        const seconds = args.durationSeconds || args.duration || 60;
+        const seconds = args.durationSeconds || args.duration || (args.durationMinutes ? args.durationMinutes * 60 : 60);
         config.intervals = [{ work: seconds, rest: 0 }];
         (config as any).label = args.label || 'Timer';
     }

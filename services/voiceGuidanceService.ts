@@ -585,8 +585,43 @@ function generateWorkoutCues(
  */
 function generateBreathingCues(
     pattern: BreathingPattern,
-    pace: number = 1.0
+    pace: number = 1.0,
+    targetDurationSeconds?: number
 ): GuidanceCue[] {
+    const estimateDurationMs = (cycles: number) => {
+        const active = pattern.inhale + (pattern.hold || 0) + pattern.exhale + (pattern.holdEmpty || 0);
+        const promptGaps =
+            0.5 + // inhale prompt gap
+            (pattern.hold ? 0.5 : 0) +
+            0.5 + // exhale prompt gap
+            (pattern.holdEmpty ? 0.5 : 0);
+        const perCycle = (active + promptGaps) * 1000 * pace;
+        const opening = 14000 * pace;
+        const closing = 4000 * pace;
+        const transitionGaps = Math.max(0, cycles - 1) * (1000 * pace);
+        return opening + (cycles * perCycle) + transitionGaps + closing;
+    };
+
+    const targetMs = targetDurationSeconds && targetDurationSeconds > 0
+        ? targetDurationSeconds * 1000
+        : undefined;
+
+    let effectiveCycles = pattern.cycles;
+    if (targetMs) {
+        const maxCycles = Math.max(1, Math.ceil((targetDurationSeconds || 1) / Math.max(1, pattern.inhale + pattern.exhale)) + 4);
+        let bestCycles = 1;
+        let bestDelta = Number.POSITIVE_INFINITY;
+        for (let cycles = 1; cycles <= maxCycles; cycles++) {
+            const delta = Math.abs(estimateDurationMs(cycles) - targetMs);
+            if (delta < bestDelta) {
+                bestDelta = delta;
+                bestCycles = cycles;
+            }
+        }
+        effectiveCycles = bestCycles;
+    }
+
+    const effectivePattern = { ...pattern, cycles: effectiveCycles };
     const cues: GuidanceCue[] = [];
     let currentTime = 0;
 
@@ -612,16 +647,16 @@ function generateBreathingCues(
     cues.push({
         timing: currentTime,
         type: 'instruction',
-        text: `We'll move through ${pattern.cycles} cycles together. Let me guide you.`,
+        text: `We'll move through ${effectivePattern.cycles} cycles together. Let me guide you.`,
         priority: 'immediate'
     });
 
     currentTime += 4000 * pace;
 
-    for (let cycle = 1; cycle <= pattern.cycles; cycle++) {
+    for (let cycle = 1; cycle <= effectivePattern.cycles; cycle++) {
         const isFirst = cycle === 1;
-        const isLast = cycle === pattern.cycles;
-        const isMidpoint = cycle === Math.ceil(pattern.cycles / 2);
+        const isLast = cycle === effectivePattern.cycles;
+        const isMidpoint = cycle === Math.ceil(effectivePattern.cycles / 2);
 
         // Cycle announcement for later cycles (not first)
         if (!isFirst && (isMidpoint || isLast)) {
@@ -651,10 +686,10 @@ function generateBreathingCues(
 
         // (Previously: per-second numeric inhale counts. Removed to avoid
         // timing drift and repeated/ skipped numbers with remote TTS.)
-        currentTime += (pattern.inhale * 1000 * pace) + (500 * pace); // Small gap after inhale
+        currentTime += (effectivePattern.inhale * 1000 * pace) + (500 * pace); // Small gap after inhale
 
         // Hold (if specified)
-        if (pattern.hold) {
+        if (effectivePattern.hold) {
             const holdPrompts = isFirst
                 ? ["Gently hold, keeping your body relaxed..."]
                 : ["Hold...", "Hold gently...", "Pause here..."];
@@ -667,7 +702,7 @@ function generateBreathingCues(
             });
 
             // (Previously: per-second numeric hold counts. Removed for robustness.)
-            currentTime += (pattern.hold * 1000 * pace) + (500 * pace);
+            currentTime += (effectivePattern.hold * 1000 * pace) + (500 * pace);
         }
 
         // Exhale - varied language
@@ -683,10 +718,10 @@ function generateBreathingCues(
         });
 
         // (Previously: per-second numeric exhale counts. Removed for robustness.)
-        currentTime += (pattern.exhale * 1000 * pace) + (500 * pace);
+        currentTime += (effectivePattern.exhale * 1000 * pace) + (500 * pace);
 
         // Hold empty (if specified)
-        if (pattern.holdEmpty) {
+        if (effectivePattern.holdEmpty) {
             const holdEmptyPrompts = isFirst
                 ? ["Rest in the stillness, lungs empty..."]
                 : ["Hold empty...", "Pause...", "Rest here..."];
@@ -699,7 +734,7 @@ function generateBreathingCues(
             });
 
             // (Previously: per-second numeric empty-hold counts. Removed for robustness.)
-            currentTime += (pattern.holdEmpty * 1000 * pace) + (500 * pace);
+            currentTime += (effectivePattern.holdEmpty * 1000 * pace) + (500 * pace);
         }
 
         // Brief transition between cycles
@@ -721,9 +756,20 @@ function generateBreathingCues(
     cues.push({
         timing: currentTime,
         type: 'completion',
-        text: `Beautiful work. ${pattern.cycles} cycles complete. Notice how calm and centered you feel. Carry this peace with you.`,
+        text: `Beautiful work. ${effectivePattern.cycles} cycles complete. Notice how calm and centered you feel. Carry this peace with you.`,
         priority: 'immediate'
     });
+
+    if (targetMs && cues.length > 0) {
+        const maxTiming = Math.max(...cues.map(c => c.timing));
+        if (maxTiming > 0 && maxTiming !== targetMs) {
+            const scale = targetMs / maxTiming;
+            return cues.map(c => ({
+                ...c,
+                timing: Math.max(0, Math.round(c.timing * scale))
+            }));
+        }
+    }
 
     return cues;
 }
@@ -1079,11 +1125,12 @@ export function generateGuidanceCues(config: VoiceGuidanceConfig): GuidanceCue[]
             break;
 
         case 'breathing': {
+            const targetDurationSeconds = config.intervals?.[0]?.work;
             if (config.pattern) {
-                cues = generateBreathingCues(config.pattern, paceMultiplier);
+                cues = generateBreathingCues(config.pattern, paceMultiplier, targetDurationSeconds);
             } else {
                 // Default to box breathing
-                cues = generateBreathingCues(BREATHING_PATTERNS.box, paceMultiplier);
+                cues = generateBreathingCues(BREATHING_PATTERNS.box, paceMultiplier, targetDurationSeconds);
             }
             cues = applyGuidanceStyle(cues, 'breathing', config.guidanceStyle);
             break;

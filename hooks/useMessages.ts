@@ -21,6 +21,7 @@ interface UseMessagesReturn {
     setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
     addMessage: (message: Message) => void;
     clearMessages: () => Promise<void>;
+    isInitialized: boolean;
 }
 
 /**
@@ -28,6 +29,7 @@ interface UseMessagesReturn {
  */
 export const useMessages = ({ supabaseUserId }: UseMessagesOptions): UseMessagesReturn => {
     const [messages, setMessages] = useState<Message[]>([]);
+    const [isInitialized, setIsInitialized] = useState(false);
     const savedMessageIdsRef = useRef<Set<string>>(new Set());
     const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -45,6 +47,7 @@ export const useMessages = ({ supabaseUserId }: UseMessagesOptions): UseMessages
             if (supabaseUserId) {
                 await loadMessagesFromSupabase();
             }
+            setIsInitialized(true);
         };
 
         loadInitialMessages();
@@ -53,7 +56,8 @@ export const useMessages = ({ supabaseUserId }: UseMessagesOptions): UseMessages
     // Load messages from Supabase when user ID changes
     useEffect(() => {
         if (supabaseUserId) {
-            loadMessagesFromSupabase();
+            setIsInitialized(false);
+            loadMessagesFromSupabase().then(() => setIsInitialized(true));
         }
     }, [supabaseUserId]);
 
@@ -70,7 +74,7 @@ export const useMessages = ({ supabaseUserId }: UseMessagesOptions): UseMessages
                 filter: `user_id=eq.${supabaseUserId}`
             }, (payload: any) => {
                 const newRecord = payload.new;
-                
+
                 // Skip guidance messages from real-time sync - they're local-only
                 if (newRecord.message_context === 'workout_guidance') {
                     return;
@@ -118,31 +122,29 @@ export const useMessages = ({ supabaseUserId }: UseMessagesOptions): UseMessages
                 // Save to Supabase (via Sync Queue) if authenticated
                 // IMPORTANT: Guidance messages are local-only and should NOT sync to Supabase
                 if (supabaseUserId) {
-                    const latestMessage = messages[messages.length - 1];
-                    if (!savedMessageIdsRef.current.has(latestMessage.id)) {
-                        // Skip syncing guidance messages - they're ephemeral and local-only
-                        if (latestMessage.messageContext === 'workout_guidance') {
-                            // Mark as saved locally but don't sync to cloud
-                            savedMessageIdsRef.current.add(latestMessage.id);
-                            return;
+                    const unsavedMessages = messages.filter(msg => !savedMessageIdsRef.current.has(msg.id));
+                    for (const pending of unsavedMessages) {
+                        // Guidance messages are local-only; mark them handled but do not sync.
+                        if (pending.messageContext === 'workout_guidance') {
+                            savedMessageIdsRef.current.add(pending.id);
+                            continue;
                         }
 
-                        // Offline-First: Schedule operation for non-guidance messages
                         syncService.scheduleOperation('SAVE_MESSAGE', {
                             userId: supabaseUserId,
                             message: {
-                                id: latestMessage.id,
-                                role: latestMessage.role,
-                                text: latestMessage.text,
-                                timestamp: latestMessage.timestamp,
-                                uiComponent: latestMessage.uiComponent,
-                                groundingChunks: latestMessage.groundingChunks,
-                                messageContext: latestMessage.messageContext,
-                                relatedWorkoutId: latestMessage.relatedWorkoutId
+                                id: pending.id,
+                                role: pending.role,
+                                text: pending.text,
+                                timestamp: pending.timestamp,
+                                uiComponent: pending.uiComponent,
+                                groundingChunks: pending.groundingChunks,
+                                messageContext: pending.messageContext,
+                                relatedWorkoutId: pending.relatedWorkoutId
                             }
                         });
 
-                        savedMessageIdsRef.current.add(latestMessage.id);
+                        savedMessageIdsRef.current.add(pending.id);
                     }
                 }
             }
@@ -259,6 +261,7 @@ export const useMessages = ({ supabaseUserId }: UseMessagesOptions): UseMessages
         messages,
         setMessages,
         addMessage,
-        clearMessages
+        clearMessages,
+        isInitialized
     };
 };

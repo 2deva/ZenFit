@@ -14,7 +14,8 @@ import { HabitHeatmap } from './tools/HabitHeatmap';
 import { AchievementBadge } from './tools/AchievementBadge';
 import { CalendarWidget } from './tools/CalendarWidget';
 import { CalendarEventAdded } from './tools/CalendarEventAdded';
-import { MapPin, ArrowUpRight, Sparkles } from 'lucide-react';
+import { MapPin, ArrowUpRight } from 'lucide-react';
+import { ZenLogo } from './ZenLogo';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ACTIONS } from '../constants/app';
 
@@ -27,7 +28,7 @@ interface MessageBubbleProps {
   audioDataRef?: React.MutableRefObject<Float32Array>;
   aiState?: 'listening' | 'speaking' | 'processing' | 'idle';
   currentGuidanceText?: string;
-  onLiveControl?: (action: 'pause' | 'resume' | 'skip' | 'back') => void;
+  onLiveControl?: (action: 'start' | 'pause' | 'resume' | 'skip' | 'stop' | 'back' | 'reset') => void;
   // Guidance Messages
   guidanceMessages?: Array<{ id: string; text: string; timestamp: number }>;
   // Active timer state (for controlling timer component)
@@ -90,14 +91,11 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                   goalIds: component.props.goalIds,
                   meta: component.props.meta
                 })}
-                // Controlled state (synced with guidance)
-                controlledIsRunning={(activeTimer?.label || 'Timer') === (component.props.label || 'Timer') ? activeTimer?.isRunning : undefined}
-                controlledTimeLeft={(activeTimer?.label || 'Timer') === (component.props.label || 'Timer') ? activeTimer?.remainingSeconds : undefined}
-                controlledIsCompleted={
-                  (activeTimer?.label || 'Timer') === (component.props.label || 'Timer')
-                    ? activeTimer?.remainingSeconds === 0 && !activeTimer?.isRunning
-                    : undefined
-                }
+                // Controlled state (synced with guidance). Thread ownership is resolved
+                // in ChatInterface, so no label-matching is needed here.
+                controlledIsRunning={activeTimer?.isRunning}
+                controlledTimeLeft={activeTimer?.remainingSeconds}
+                controlledIsCompleted={activeTimer ? activeTimer.remainingSeconds === 0 && !activeTimer.isRunning : undefined}
                 // Live Mode Integration
                 isLiveMode={isLiveMode}
                 audioDataRef={audioDataRef}
@@ -222,7 +220,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
           <div className="relative group">
             <div className="absolute inset-0 bg-gradient-to-br from-claude-400 to-claude-600 rounded-lg sm:rounded-xl blur-md opacity-30 group-hover:opacity-50 transition-opacity"></div>
             <div className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-lg sm:rounded-xl bg-gradient-to-br from-claude-500 to-claude-600 flex items-center justify-center shadow-soft text-white">
-              <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <ZenLogo className="w-4 h-4 sm:w-5 sm:h-5 text-white" monochrome />
             </div>
           </div>
         </div>

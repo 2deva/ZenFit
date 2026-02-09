@@ -4,6 +4,12 @@
   "devCommand": "npm run dev",
   "installCommand": "npm install",
   "framework": "vite",
+  "crons": [
+    {
+      "path": "/api/cron/daily-nudge",
+      "schedule": "0 6 * * *"
+    }
+  ],
   "functions": {
     "api/chat.ts": {
       "includeFiles": "services/**"

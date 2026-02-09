@@ -190,6 +190,11 @@ class TranscriptBuffer {
         return [...this.transcripts];
     }
 
+    getRecent(limit: number): LiveTranscript[] {
+        if (limit <= 0) return [];
+        return this.transcripts.slice(-limit);
+    }
+
     getUserMessages(): string[] {
         return this.transcripts
             .filter(t => t.isUser && t.text.length > 5)
@@ -229,6 +234,21 @@ export function bufferTranscript(transcript: LiveTranscript): void {
  */
 export function clearSessionBuffer(): void {
     sessionBuffer.clear();
+}
+
+/**
+ * Export recent transcripts for observability (e.g., Opik traces).
+ */
+export function getSessionTranscripts(limit: number = 20): LiveTranscript[] {
+    return sessionBuffer
+        .getRecent(limit)
+        .filter(t => t.text && t.text.trim().length > 0)
+        .map(t => ({
+            text: t.text,
+            isUser: t.isUser,
+            timestamp: t.timestamp,
+            isFinal: t.isFinal
+        }));
 }
 
 /**

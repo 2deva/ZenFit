@@ -7,6 +7,8 @@
 
 const DB_URL = 'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/dist/exercises.json';
 const IMAGE_BASE_URL = 'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/';
+const DB_CACHE_STORAGE_KEY = 'zen_exercise_db_cache_v1';
+const DB_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 interface ExerciseEntry {
     id: string;
@@ -31,12 +33,59 @@ function normalize(str: string): string {
     return str.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
 }
 
+function readPersistedDb(): ExerciseEntry[] | null {
+    if (typeof localStorage === 'undefined') return null;
+    try {
+        const raw = localStorage.getItem(DB_CACHE_STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as { timestamp?: number; data?: ExerciseEntry[] };
+        if (!Array.isArray(parsed?.data) || typeof parsed?.timestamp !== 'number') {
+            return null;
+        }
+        const isFresh = Date.now() - parsed.timestamp < DB_CACHE_TTL_MS;
+        if (!isFresh) return null;
+        return parsed.data;
+    } catch {
+        return null;
+    }
+}
+
+function readPersistedDbStaleAllowed(): ExerciseEntry[] | null {
+    if (typeof localStorage === 'undefined') return null;
+    try {
+        const raw = localStorage.getItem(DB_CACHE_STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as { data?: ExerciseEntry[] };
+        if (!Array.isArray(parsed?.data)) return null;
+        return parsed.data;
+    } catch {
+        return null;
+    }
+}
+
+function writePersistedDb(data: ExerciseEntry[]): void {
+    if (typeof localStorage === 'undefined') return;
+    try {
+        localStorage.setItem(DB_CACHE_STORAGE_KEY, JSON.stringify({
+            timestamp: Date.now(),
+            data
+        }));
+    } catch {
+        // Ignore storage failures (quota/private mode/etc.)
+    }
+}
+
 /**
  * Fetches the exercise database (cached in memory).
  */
 async function getDatabase(): Promise<ExerciseEntry[]> {
     if (dbCache) return dbCache;
     if (fetchPromise) return fetchPromise;
+    const persisted = readPersistedDb();
+    if (persisted && persisted.length > 0) {
+        dbCache = persisted;
+        return persisted;
+    }
 
     fetchPromise = fetch(DB_URL)
         .then(res => {
@@ -45,11 +94,18 @@ async function getDatabase(): Promise<ExerciseEntry[]> {
         })
         .then(data => {
             dbCache = data;
+            writePersistedDb(data);
             fetchPromise = null;
             return data;
         })
         .catch(err => {
             console.error('Error loading exercise database:', err);
+            const stale = readPersistedDbStaleAllowed();
+            if (stale && stale.length > 0) {
+                dbCache = stale;
+                fetchPromise = null;
+                return stale;
+            }
             fetchPromise = null;
             return [];
         });

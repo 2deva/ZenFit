@@ -89,6 +89,14 @@ CREATE TABLE IF NOT EXISTS google_integrations (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Nudge actions (feedback loop for calendar nudges)
+CREATE TABLE IF NOT EXISTS nudge_actions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  action TEXT NOT NULL CHECK (action IN ('deep_link_clicked', 'workout_completed', 'dismissed')),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Create indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_user_goals_user_id ON user_goals(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_goals_active ON user_goals(user_id, is_active);
@@ -97,6 +105,7 @@ CREATE INDEX IF NOT EXISTS idx_habit_streaks_user_id ON habit_streaks(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_memories_user_id ON user_memories(user_id);
 CREATE INDEX IF NOT EXISTS idx_scheduled_events_user_id ON scheduled_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_google_integrations_user ON google_integrations(user_id);
+CREATE INDEX IF NOT EXISTS idx_nudge_actions_user_id ON nudge_actions(user_id);
 
 -- Create HNSW index for vector similarity search
 CREATE INDEX IF NOT EXISTS idx_user_memories_embedding ON user_memories 
@@ -139,6 +148,7 @@ ALTER TABLE habit_streaks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_memories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE scheduled_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE google_integrations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE nudge_actions ENABLE ROW LEVEL SECURITY;
 
 -- Create policies for public access (using anon key)
 -- Note: In production, these should be more restrictive
@@ -148,3 +158,4 @@ CREATE POLICY "Allow all operations" ON workout_sessions FOR ALL USING (true);
 CREATE POLICY "Allow all operations" ON habit_streaks FOR ALL USING (true);
 CREATE POLICY "Allow all operations" ON user_memories FOR ALL USING (true);
 CREATE POLICY "Allow all operations" ON scheduled_events FOR ALL USING (true);
+CREATE POLICY "Allow all operations" ON nudge_actions FOR ALL USING (true);

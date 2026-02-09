@@ -13,6 +13,7 @@ import { Message, MessageRole, UIComponentData } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { generateAchievementBadgeProps, generateHabitHeatmapProps } from '../services/toolIntegrationService';
 import { ActivitySession, ActivityIntent, ActivityPhase } from '../hooks/useActivityState';
+import { trackNudgeAction, checkStreakComeback } from '../services/calendarNudgeService';
 
 interface ActionHandlersOptions {
     userProfile: UserProfile;
@@ -73,6 +74,8 @@ export const createActionHandlers = (options: ActionHandlersOptions, timerActivi
     const resumeActivity = resumeActivityRaw ?? (() => { /* noop */ });
     const completeActivity = completeActivityRaw ?? (() => { /* noop */ });
     const stopActivity = stopActivityRaw ?? (() => { /* noop */ });
+    const processedTimerCompletions = new Set<string>();
+    const processedWorkoutCompletions = new Set<string>();
 
     // Helper to resolve activity ID from label, checking persistence if needed
     const getActivityId = (label: string): string | undefined => {
@@ -131,7 +134,9 @@ export const createActionHandlers = (options: ActionHandlersOptions, timerActivi
                 console.warn('GENERATE_WORKOUT: Failed to load exercise pool', e);
             }
 
-            const sessionConfig = generateSessionFromBuilder(data, goalIds, pool);
+            const sessionConfig = generateSessionFromBuilder(data, goalIds, pool, {
+                healthConditions: onboardingState?.healthConditions || []
+            });
 
             // CASE A: Mindfulness/Timer Session
             if (sessionConfig.type === 'timer') {
@@ -246,8 +251,23 @@ export const createActionHandlers = (options: ActionHandlersOptions, timerActivi
         },
 
         [ACTIONS.TIMER_COMPLETE]: async (data: any) => {
+            const timerCompletionKey =
+                (data.activityId && typeof data.activityId === 'string')
+                    ? `activity:${data.activityId}`
+                    : `fallback:${data.label || 'timer'}:${data.durationSeconds || 60}:${data.goalType || ''}`;
+            if (processedTimerCompletions.has(timerCompletionKey)) {
+                return;
+            }
+            processedTimerCompletions.add(timerCompletionKey);
+
             // Ensure the corresponding ActivityEngine session is marked complete
-            if (data.label && typeof data.label === 'string') {
+            if (data.activityId && typeof data.activityId === 'string') {
+                try {
+                    completeActivity(data.activityId);
+                } catch (e) {
+                    console.warn('TIMER_COMPLETE: failed to mark ActivityEngine session complete by activityId', e);
+                }
+            } else if (data.label && typeof data.label === 'string') {
                 const maybeId = getActivityId(data.label);
                 if (maybeId) {
                     try {
@@ -276,6 +296,21 @@ export const createActionHandlers = (options: ActionHandlersOptions, timerActivi
                         exercises: [],
                         goalIds
                     });
+
+                    // Track nudge feedback loop (user completed a workout after nudge)
+                    trackNudgeAction(supabaseUserId, 'workout_completed').catch(() => { /* silent */ });
+
+                    // Check for streak comeback celebration
+                    const comebackMessage = await checkStreakComeback(supabaseUserId);
+                    if (comebackMessage) {
+                        const comebackMsg: Message = {
+                            id: uuidv4(),
+                            role: MessageRole.MODEL,
+                            text: comebackMessage,
+                            timestamp: Date.now()
+                        };
+                        setMessages((prev: Message[]) => [...prev, comebackMsg]);
+                    }
 
                     // Update onboarding
                     if (onboardingState && !onboardingState.firstWorkoutCompletedAt) {
@@ -381,6 +416,15 @@ export const createActionHandlers = (options: ActionHandlersOptions, timerActivi
         },
 
         [ACTIONS.WORKOUT_COMPLETE]: async (data: any) => {
+            const workoutCompletionKey =
+                (data.workoutId && typeof data.workoutId === 'string')
+                    ? `workout:${data.workoutId}`
+                    : `fallback:${data.workoutType || 'workout'}:${data.durationSeconds || 0}:${(data.exercises || []).length}`;
+            if (processedWorkoutCompletions.has(workoutCompletionKey)) {
+                return;
+            }
+            processedWorkoutCompletions.add(workoutCompletionKey);
+
             // Default stats for guests
             let streakCount: number = NUMBERS.DEFAULT_STREAK_COUNT;
             let longestStreak: number = NUMBERS.DEFAULT_STREAK_COUNT;
@@ -421,6 +465,21 @@ export const createActionHandlers = (options: ActionHandlersOptions, timerActivi
                     exercises: data.exercises,
                     goalIds
                 });
+
+                // Track nudge feedback loop (user completed a workout after nudge)
+                trackNudgeAction(supabaseUserId, 'workout_completed').catch(() => { /* silent */ });
+
+                // Check for streak comeback celebration
+                const comebackMessage = await checkStreakComeback(supabaseUserId);
+                if (comebackMessage) {
+                    const comebackMsg: Message = {
+                        id: uuidv4(),
+                        role: MessageRole.MODEL,
+                        text: comebackMessage,
+                        timestamp: Date.now()
+                    };
+                    setMessages((prev: Message[]) => [...prev, comebackMsg]);
+                }
 
                 // Mark first workout completed for onboarding
                 if (onboardingState && !onboardingState.firstWorkoutCompletedAt) {

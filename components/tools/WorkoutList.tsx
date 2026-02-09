@@ -16,7 +16,7 @@ interface WorkoutListProps {
     exercises: Exercise[];
     workoutId?: string;
     userId?: string;
-    onComplete?: (data: { workoutType: string; durationSeconds: number; exercises: Exercise[]; goalType?: string; goalIds?: string[] }) => void;
+    onComplete?: (data: { workoutType: string; durationSeconds: number; exercises: Exercise[]; goalType?: string; goalIds?: string[]; workoutId?: string }) => void;
     onProgressChange?: (progress: { title: string; completedExercises: string[]; totalExercises: number }) => void;
 
     rounds?: number;
@@ -35,7 +35,7 @@ interface WorkoutListProps {
     audioDataRef?: React.MutableRefObject<Float32Array>;
     aiState?: 'listening' | 'speaking' | 'processing' | 'idle';
     currentGuidanceText?: string;
-    onLiveControl?: (action: 'pause' | 'resume' | 'skip' | 'back') => void;
+    onLiveControl?: (action: 'start' | 'pause' | 'resume' | 'skip' | 'stop' | 'back' | 'reset') => void;
 
     // Guidance Messages
     guidanceMessages?: Array<{ id: string; text: string; timestamp: number }>;
@@ -51,6 +51,9 @@ const parseDuration = (dur?: string): number => {
 
 // Enhanced function to extract duration from exercise name or duration field
 const extractDurationInfo = (exercise: Exercise): { duration: number; cleanName: string; displayDuration: string | null; type: 'timer' | 'reps' | 'manual' } => {
+    if (!exercise || typeof exercise.name !== 'string') {
+        return { duration: 0, cleanName: 'Exercise', displayDuration: null, type: 'manual' };
+    }
     // First check if there's a separate duration field
     if (exercise.duration) {
         const duration = parseDuration(exercise.duration);
@@ -249,21 +252,16 @@ export const WorkoutList: React.FC<WorkoutListProps> = ({
     // Access global robust state
     const { workoutProgress } = useAppContext();
 
-    // Flatten exercises based on rounds
-    // If rounds > 1, repeat the exercise list n times
+    // Flatten exercises based on rounds; only include items with a valid name so we never throw in extractDurationInfo
     const validExercises = React.useMemo(() => {
         if (!Array.isArray(exercises) || exercises.length === 0) return [];
-        if (rounds <= 1) return exercises;
+        const withName = exercises.filter((ex): ex is Exercise => ex != null && typeof (ex as any).name === 'string');
+        if (withName.length === 0) return [];
+        if (rounds <= 1) return withName;
 
         const flattened: Exercise[] = [];
-        // Loop for each round
         for (let r = 0; r < rounds; r++) {
-            // Add exercises for this round
-            exercises.forEach(ex => {
-                flattened.push({ ...ex }); // Clone to avoid ref issues
-            });
-            // Optional: Add a "Round Break" rest item between rounds if not last round?
-            // For now, let's keep it simple. The schema allows 'restAfter' on items.
+            withName.forEach(ex => flattened.push({ ...ex }));
         }
         return flattened;
     }, [exercises, rounds]);
@@ -497,7 +495,7 @@ export const WorkoutList: React.FC<WorkoutListProps> = ({
     const hasInitializedRef = useRef(false);
 
     useEffect(() => {
-        const currentEx = exercises[activeIdx];
+        const currentEx = validExercises[activeIdx];
         const currentDurationInfo = currentEx ? extractDurationInfo(currentEx) : { duration: 0 };
         const dur = currentDurationInfo.duration;
 
@@ -544,7 +542,7 @@ export const WorkoutList: React.FC<WorkoutListProps> = ({
                 }, 100);
             }
         }
-    }, [activeIdx, exercises, isLiveMode]);
+    }, [activeIdx, validExercises, isLiveMode]);
 
     // Timer Countdown & Synchronization
     useEffect(() => {
@@ -582,35 +580,36 @@ export const WorkoutList: React.FC<WorkoutListProps> = ({
         }
 
         return () => clearInterval(interval);
-    }, [isTimerRunning, timeLeft, totalTime, activeIdx, isLiveMode, workoutProgress]);
+    }, [isTimerRunning, totalTime, activeIdx, isLiveMode, workoutProgress]);
 
     const markComplete = useCallback((idx: number) => {
         setCompleted(prev => {
             if (prev.includes(idx)) return prev;
             const newCompleted = [...prev, idx];
-            if (newCompleted.length === exercises.length && !hasCalledOnComplete.current) {
+            if (newCompleted.length === validExercises.length && !hasCalledOnComplete.current) {
                 hasCalledOnComplete.current = true;
-                const totalSeconds = exercises.reduce((acc, ex) => {
+                const totalSeconds = validExercises.reduce((acc, ex) => {
                     const durationInfo = extractDurationInfo(ex);
                     return acc + durationInfo.duration;
                 }, 0);
                 setTimeout(() => onCompleteRef.current?.({
                     workoutType: title,
                     durationSeconds: totalSeconds,
-                    exercises,
+                    exercises: validExercises,
                     goalType,
-                    goalIds
+                    goalIds,
+                    workoutId
                 }), 0);
             }
             return newCompleted;
         });
-        if (idx < exercises.length - 1) setTimeout(() => setActiveIdx(idx + 1), 500);
-    }, [exercises, title]);
+        if (idx < validExercises.length - 1) setTimeout(() => setActiveIdx(idx + 1), 500);
+    }, [validExercises, title]);
 
     // Control Handlers
     const handlePauseResume = () => {
         if (isLiveMode && onLiveControl) {
-            onLiveControl(isTimerRunning ? 'pause' : 'resume');
+            onLiveControl(isTimerRunning ? 'pause' : 'start');
         }
         if (!isLiveMode) {
             setIsTimerRunning(!isTimerRunning);
@@ -635,8 +634,8 @@ export const WorkoutList: React.FC<WorkoutListProps> = ({
     const radius = 20;
     const circumference = 2 * Math.PI * radius;
     const dashoffset = totalTime > 0 ? circumference - (timeLeft / totalTime) * circumference : 0;
-    const allCompleted = exercises.length > 0 && completed.length === exercises.length;
-    const progressPercent = Math.round((completed.length / exercises.length) * 100);
+    const allCompleted = validExercises.length > 0 && completed.length === validExercises.length;
+    const progressPercent = Math.round((completed.length / validExercises.length) * 100);
 
     return (
         <div className="bg-white/90 backdrop-blur-sm rounded-3xl shadow-soft-lg w-full max-w-sm animate-slide-up-fade overflow-hidden border border-sand-200 flex flex-col transition-all duration-300 max-h-[85vh] sm:max-h-[700px]">
@@ -670,12 +669,12 @@ export const WorkoutList: React.FC<WorkoutListProps> = ({
                                 <div className="flex items-center gap-2 mt-1">
                                     <span className="text-sm font-display font-bold text-green-700">Workout Complete!</span>
                                     <span className="text-xs text-green-600 font-body">
-                                        {completed.length} of {exercises.length} exercises
+                                        {completed.length} of {validExercises.length} exercises
                                     </span>
                                 </div>
                             ) : (
                                 <p className="text-xs text-ink-500 font-body mt-0.5">
-                                    {completed.length} of {exercises.length} completed
+                                    {completed.length} of {validExercises.length} completed
                                 </p>
                             )}
                         </div>
@@ -742,7 +741,7 @@ export const WorkoutList: React.FC<WorkoutListProps> = ({
                     scrollBehavior: 'smooth'
                 }}
             >
-                {exercises.map((ex, idx) => {
+                {validExercises.map((ex, idx) => {
                     const isDone = completed.includes(idx);
                     const isActive = idx === activeIdx && !isDone;
                     const isRest = ex.name.toLowerCase().includes('rest');
@@ -862,6 +861,9 @@ export const WorkoutList: React.FC<WorkoutListProps> = ({
                                                         className="h-9 w-9 rounded-lg bg-white hover:bg-sand-50 border border-sand-200"
                                                         onClick={(e) => {
                                                             e.stopPropagation();
+                                                            if (isLiveMode && onLiveControl) {
+                                                                onLiveControl('reset');
+                                                            }
                                                             setIsTimerRunning(false);
                                                             setTimeLeft(totalTime);
                                                         }}

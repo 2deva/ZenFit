@@ -190,3 +190,23 @@ export interface ExtendedUIComponentData extends UIComponentData {
   controlledActiveIndex?: number;
   controlledCompleted?: number[];
 }
+
+// ============================================================================
+// Evaluation / Opik Metrics Types
+// ============================================================================
+
+/** Core evaluation signals we log to Opik as feedbackScores for both text and live flows. */
+export interface EvaluationSignals {
+  // Heuristic metrics (deterministic, regex / rule-based)
+  action_first?: number;
+  tool_correctness?: number;
+  safety?: number;
+  friction?: number;
+  empathy?: number;
+  reengage_support?: number;
+  action_bias?: number; // live-only helper
+
+  // Higher-level / judge-style metrics (can be heuristics or LLM-as-judge)
+  resolution_adherence?: number;
+  empathy_reengage?: number;
+}

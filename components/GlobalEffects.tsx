@@ -1,18 +1,18 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useAppContext } from '../contexts/AppContext';
-import { useLiveSessionContext } from '../contexts/LiveSessionContext';
 import { useAuth } from '../contexts/AuthContext';
 import { getFitnessData } from '../services/fitnessService';
 import {
     syncUserProfile, getUserGoals, getStepGoalForUser,
-    getOnboardingState, createOnboardingState
+    getOnboardingState, createOnboardingState, getRecentWorkouts
 } from '../services/supabaseService';
 import { getFullUserContext } from '../services/userContextService';
 import { loadGuidanceState, loadAutoReconnectState } from '../services/persistenceService';
-import { tryCalendarNudge } from '../services/calendarNudgeService';
+import { tryCalendarNudge, RETURN_WORKOUT_PARAM, trackNudgeAction } from '../services/calendarNudgeService';
 import { TIMING } from '../constants/app';
-import { LiveStatus } from '../types';
 import { supabase, isSupabaseConfigured } from '../supabaseConfig';
+import { useLiveSessionContext } from '../contexts/LiveSessionContext';
+import { LiveStatus } from '../types';
 
 export const GlobalEffects: React.FC = () => {
     const { user, accessToken } = useAuth();
@@ -24,10 +24,69 @@ export const GlobalEffects: React.FC = () => {
         setUserLocation,
         setFitnessStats,
         activeWorkoutMessageId,
-        supabaseUserId
+        supabaseUserId,
+        isMessagesInitialized,
+        handleSendMessage
     } = useAppContext();
 
     const { liveStatus, connectLive } = useLiveSessionContext();
+
+    // Deep link: ?start=return-workout from calendar nudge — show dynamic message based on gap
+    const returnWorkoutHandledRef = useRef(false);
+    const hasReturnWorkoutParam = useRef(false);
+
+    // Build return message based on gap length (matches nudge config)
+    const getReturnMessage = async (): Promise<string> => {
+        if (!supabaseUserId) return "I'm ready for my return workout.";
+        try {
+            const recentWorkouts = await getRecentWorkouts(supabaseUserId, 14);
+            const completed = recentWorkouts.filter(w => w.completed);
+            if (completed.length === 0) return "I'm ready to start my first workout.";
+
+            const today = new Date().toISOString().split('T')[0];
+            const lastDate = new Date(completed[0].created_at || '').toISOString().split('T')[0];
+            const daysMissed = Math.floor(
+                (new Date(today).getTime() - new Date(lastDate).getTime()) / (24 * 60 * 60 * 1000)
+            );
+
+            if (daysMissed <= 2) return "I'm ready for my 10-minute return workout.";
+            if (daysMissed <= 7) return "I'd like a quick 5-minute stretch.";
+            return "Hey, I'm back! Let's do a quick check-in.";
+        } catch {
+            return "I'm ready for my return workout.";
+        }
+    };
+
+    // Detect param and clean URL immediately (before any async loading)
+    useEffect(() => {
+        const [paramKey, paramValue] = RETURN_WORKOUT_PARAM.split('=');
+        const params = new URLSearchParams(window.location.search);
+        if (params.get(paramKey) !== paramValue) return;
+        if (hasReturnWorkoutParam.current) return;
+        hasReturnWorkoutParam.current = true;
+
+        // Clean URL immediately
+        const cleanUrl = window.location.pathname || '/';
+        window.history.replaceState({}, '', cleanUrl);
+    }, []);
+
+    // Wait for messages to initialize before sending the return workout message
+    // Also wait for supabaseUserId sync if user is logged in (prevents Supabase load from overwriting)
+    useEffect(() => {
+        if (!hasReturnWorkoutParam.current) return;
+        if (!isMessagesInitialized) return;
+        if (user && !supabaseUserId) return; // Wait for auth sync
+        if (returnWorkoutHandledRef.current) return;
+        returnWorkoutHandledRef.current = true;
+
+        // Track that user clicked the nudge deep link (feedback loop)
+        if (supabaseUserId) {
+            trackNudgeAction(supabaseUserId, 'deep_link_clicked').catch(() => { });
+        }
+
+        // Send dynamic return message
+        getReturnMessage().then(msg => handleSendMessage(msg));
+    }, [isMessagesInitialized, user, supabaseUserId, handleSendMessage]);
 
     // Initialize location
     useEffect(() => {
@@ -88,7 +147,7 @@ export const GlobalEffects: React.FC = () => {
                         oState = await createOnboardingState(supaUser.id);
                     }
                     setOnboardingState(oState);
-                    tryCalendarNudge(supaUser.id, oState, accessToken).catch(() => {});
+                    tryCalendarNudge(supaUser.id, oState, accessToken).catch(() => { });
                 }
             } else {
                 setSupabaseUserId(null);

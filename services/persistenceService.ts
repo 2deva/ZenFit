@@ -215,6 +215,13 @@ export interface WorkoutRefsState {
     timestamp: number;
     messageId?: string;
   } | null;
+  lastTimer?: {
+    label: string;
+    duration: number;
+    activityType: string;
+    config: any;
+    timestamp: number;
+  } | null;
   workoutListsMap: Array<[string, { exercises: any[]; title: string; timestamp: number }]>;
 }
 

@@ -11,6 +11,8 @@ import { getStreak, getRecentWorkouts } from '../services/supabaseService';
 import { NUMBERS } from '../constants/app';
 import { getGuidanceExecutor } from '../services/guidanceExecutor';
 import { MindfulSessionConfig, buildMindfulPhases } from '../services/sessionGeneratorService';
+import { resolveMindfulTimer } from '../utils/mindfulTimer';
+import { shouldUseSharedNumericCountdown } from '../utils/liveGuidancePolicy';
 
 interface LiveSessionContextType {
     liveStatus: LiveStatus;
@@ -25,7 +27,7 @@ interface LiveSessionContextType {
     liveIsMuted: boolean;
     setLiveIsMuted: (muted: boolean) => void;
 
-    handleActivityControl: (action: 'pause' | 'resume' | 'skip' | 'stop' | 'back') => void;
+    handleActivityControl: (action: 'start' | 'pause' | 'resume' | 'skip' | 'stop' | 'back' | 'reset') => void;
     handleVoiceCommand: (action: string, response: string | null) => void;
 
     // Additional properties exposed for UI
@@ -87,6 +89,7 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
 
     // Track the currently active guided ActivityEngine session (for timers / breathing / meditation)
     const guidedActivityIdRef = useRef<string | null>(null);
+    const lastGuidedUpdateKeyRef = useRef<string | null>(null);
 
     // --- Callbacks for useLiveSession ---
 
@@ -178,9 +181,8 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
             if (guidanceActive || expectingGuidance) {
                 guidanceRouteUntilRef.current = Math.max(guidanceRouteUntilRef.current, now + 12_000);
             }
-            const shouldRouteAsGuidance = guidanceActive || expectingGuidance || now < guidanceRouteUntilRef.current;
-
             const workoutMsgId = activeWorkoutMessageIdRef.current || lastGuidanceThreadIdRef.current;
+            const shouldRouteAsGuidance = !!workoutMsgId && (guidanceActive || expectingGuidance || now < guidanceRouteUntilRef.current);
 
             if (currentLiveModelMessageIdRef.current) {
                 setMessages(prev => prev.map(msg => {
@@ -259,28 +261,30 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                 if (component.type === 'timer' && component.props) {
                     const label = component.props.label || '';
                     const duration = component.props.duration ?? 60;
-                    const isBreathing = label.toLowerCase().includes('breathing') || label.toLowerCase().includes('breath');
-                    const isMeditation = label.toLowerCase().includes('meditation') || label.toLowerCase().includes('mindful');
+                    const resolved = resolveMindfulTimer(component.props);
+                    const activityType = resolved.activityType;
 
-                    if (isBreathing || isMeditation) {
-                        const activityType = isBreathing ? 'breathing' : 'meditation';
-
-                        const meta = (component.props as any).meta;
+                    if (activityType) {
+                        const meta = (component.props as any).meta || {};
                         const mindfulConfig: MindfulSessionConfig | undefined = meta?.mindfulConfig;
-                        const phases = meta?.phases as any[] | undefined;
+                        const phases = resolved.phases;
+                        const intent =
+                            (mindfulConfig?.intent || resolved.intent) as MindfulSessionConfig['intent'] | undefined;
+                        const guidanceStyle =
+                            (mindfulConfig?.guidanceStyle || resolved.guidanceStyle) as MindfulSessionConfig['guidanceStyle'] | undefined;
 
                         const config: any = {
                             duration,
                             durationMinutes: Math.floor(duration / 60),
                             label,
-                            ...(isBreathing && {
+                            ...(activityType === 'breathing' && {
                                 pattern: {
-                                    name: mindfulConfig?.pattern || 'box',
+                                    name: mindfulConfig?.pattern || resolved.pattern || 'box',
                                     cycles: Math.floor(duration / 60)
                                 }
                             }),
-                            guidanceStyle: mindfulConfig?.guidanceStyle,
-                            intent: mindfulConfig?.intent,
+                            guidanceStyle,
+                            intent,
                             phases
                         };
 
@@ -346,6 +350,8 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
         sendMessageToLive,
         pauseGuidance,
         resumeGuidance,
+        skipGuidance,
+        goBackGuidance,
         startGuidanceForTimer,
         stopGuidance,
         connectionQuality,
@@ -376,17 +382,37 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
         userId: supabaseUserId,
         onGuidedActivityStart: async (activityType, config) => {
             console.log(`Guided activity update [${activityType}]:`, config);
-            if (activityType === 'workout' && config.exercises) {
+            const guidedUpdateKey = JSON.stringify({
+                activityType,
+                title: config?.title,
+                label: config?.label,
+                currentExerciseIndex: config?.currentExerciseIndex,
+                completedExercisesCount: Array.isArray(config?.completedExercises) ? config.completedExercises.length : 0,
+                isTimerRunning: config?.isTimerRunning,
+                isResting: config?.isResting,
+                restDuration: config?.restDuration,
+                timerDuration: config?.timerDuration,
+                duration: config?.duration
+            });
+            if (lastGuidedUpdateKeyRef.current === guidedUpdateKey) {
+                return;
+            }
+            lastGuidedUpdateKeyRef.current = guidedUpdateKey;
+            if ((activityType === 'workout' || activityType === 'stretching') && config.exercises) {
                 const currentExerciseIndex = config.currentExerciseIndex ?? 0;
                 const completedExercises: string[] = config.completedExercises || [];
-                const completedIndices: number[] = [];
-                config.exercises.forEach((e: any, idx: number) => {
-                    const isNameCompleted = completedExercises.includes(e.name);
-                    const isBeforeCurrent = idx < currentExerciseIndex;
-                    if (isNameCompleted || isBeforeCurrent) {
-                        completedIndices.push(idx);
-                    }
-                });
+                const completedIndices: number[] = Array.isArray(config.completedExerciseIndices)
+                    ? config.completedExerciseIndices.filter((idx: unknown) => Number.isInteger(idx)).map((idx: number) => idx)
+                    : [];
+                if (completedIndices.length === 0) {
+                    config.exercises.forEach((e: any, idx: number) => {
+                        const isNameCompleted = completedExercises.includes(e.name);
+                        const isBeforeCurrent = idx < currentExerciseIndex;
+                        if (isNameCompleted || isBeforeCurrent) {
+                            completedIndices.push(idx);
+                        }
+                    });
+                }
 
                 // DETECT WORKOUT COMPLETION (all exercises done)
                 const allExercisesCompleted = completedExercises.length >= config.exercises.length ||
@@ -401,14 +427,30 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                     startedAt: config.startedAt || Date.now()
                 });
 
-                setWorkoutProgress({
-                    currentExerciseIndex,
-                    completedIndices,
-                    isTimerRunning: config.isTimerRunning ?? false,
-                    isResting: config.isResting ?? false,
-                    restDuration: config.restDuration,
-                    timerDuration: config.timerDuration,
-                    timerStartTime: config.isTimerRunning ? Date.now() : undefined
+                const hasTimerRunning = Object.prototype.hasOwnProperty.call(config, 'isTimerRunning');
+                const hasIsResting = Object.prototype.hasOwnProperty.call(config, 'isResting');
+                const hasRestDuration = Object.prototype.hasOwnProperty.call(config, 'restDuration');
+                const hasTimerDuration = Object.prototype.hasOwnProperty.call(config, 'timerDuration');
+
+                setWorkoutProgress(prev => {
+                    const nextIsTimerRunning = hasTimerRunning ? !!config.isTimerRunning : (prev?.isTimerRunning ?? false);
+                    const wasRunning = prev?.isTimerRunning ?? false;
+                    const nextTimerStartTime = hasTimerRunning
+                        ? (nextIsTimerRunning
+                            ? (wasRunning ? prev?.timerStartTime : Date.now())
+                            : undefined)
+                        : prev?.timerStartTime;
+
+                    return {
+                        currentExerciseIndex,
+                        completedIndices,
+                        isTimerRunning: nextIsTimerRunning,
+                        isResting: hasIsResting ? !!config.isResting : (prev?.isResting ?? false),
+                        restDuration: hasRestDuration ? config.restDuration : prev?.restDuration,
+                        timerDuration: hasTimerDuration ? config.timerDuration : prev?.timerDuration,
+                        timerStartTime: nextTimerStartTime,
+                        timerRemainingAtPause: prev?.timerRemainingAtPause
+                    };
                 });
 
                 if (!activeWorkoutMessageIdRef.current) {
@@ -452,6 +494,7 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
 
                     // Trigger workout completion handler (logs workout, updates streaks, shows achievements)
                     await handleActionWrapper(ACTIONS.WORKOUT_COMPLETE, {
+                        workoutId: activeWorkoutMessageIdRef.current || undefined,
                         workoutType: config.title || TEXT.VOICE_WORKOUT_DEFAULT_TITLE,
                         durationSeconds,
                         exercises: exerciseData
@@ -528,20 +571,26 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                         }, 1000); // Small delay to let completion handler finish
                     }
                 }
-            } else if (activityType === 'breathing' || activityType === 'meditation') {
+            } else if (activityType === 'breathing' || activityType === 'meditation' || activityType === 'timer') {
                 const duration = config.duration || config.durationMinutes * 60 || (config.pattern ? config.pattern.cycles * 60 : 300);
                 const label = config.label ||
                     (activityType === 'breathing' ? `${config.pattern?.name || 'Breathing'} Exercise` :
-                        `${config.style || 'Guided'} Meditation`);
+                        activityType === 'meditation'
+                            ? `${config.style || 'Guided'} Meditation`
+                            : 'Guided Timer');
 
                 // Derive a mindful configuration so Live-origin sessions share the
                 // same semantics as builder-generated mindful timers.
                 const totalMinutes = Math.max(1, Math.floor(duration / 60));
                 const guidanceStyle = (config.guidanceStyle as MindfulSessionConfig['guidanceStyle']) || 'light';
+                const providedIntent = config.intent as MindfulSessionConfig['intent'] | undefined;
                 const inferredIntent: MindfulSessionConfig['intent'] =
-                    activityType === 'breathing'
+                    providedIntent ||
+                    (activityType === 'breathing'
                         ? 'breathing_reset'
-                        : (label.toLowerCase().includes('sleep') ? 'sleep_prep' : 'deep_meditation');
+                        : activityType === 'meditation'
+                            ? (label.toLowerCase().includes('sleep') ? 'sleep_prep' : 'deep_meditation')
+                            : 'focus_block');
 
                 const mindfulConfig: MindfulSessionConfig = {
                     intent: inferredIntent,
@@ -552,18 +601,31 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                         : undefined
                 };
 
-                const phases = buildMindfulPhases(mindfulConfig);
+                const phases = Array.isArray(config.phases) && config.phases.length > 0
+                    ? config.phases
+                    : buildMindfulPhases(mindfulConfig);
 
-                // Start a unified ActivityEngine session for this guided timer so
-                // Timer UI, guidance, and Live audio all share the same clock.
-                const activityId = startActivity({
-                    type: activityType,
-                    label,
-                    totalSeconds: duration,
-                    intent: mindfulConfig.intent,
-                    phases
-                });
-                guidedActivityIdRef.current = activityId;
+                // Start the unified ActivityEngine session once; subsequent progress
+                // callbacks must not recreate/reset it.
+                const existingId = guidedActivityIdRef.current;
+                const existingSession = existingId ? activitySessions[existingId] : null;
+                const shouldCreateSession =
+                    !existingSession ||
+                    existingSession.state === 'completed' ||
+                    existingSession.state === 'stopped' ||
+                    existingSession.type !== activityType ||
+                    existingSession.label !== label;
+
+                if (shouldCreateSession) {
+                    const activityId = startActivity({
+                        type: activityType,
+                        label,
+                        totalSeconds: duration,
+                        intent: mindfulConfig.intent,
+                        phases
+                    });
+                    guidedActivityIdRef.current = activityId;
+                }
 
                 // Persist config for guidance executor, including mindful metadata.
                 const enrichedConfig = {
@@ -624,14 +686,12 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
             return;
         }
 
-        // Restrict countdown to simple guided timer/breathing/meditation activities.
-        const simpleTypes: Array<'timer' | 'breathing' | 'meditation'> = ['timer', 'breathing', 'meditation'];
+        // Only use shared numeric countdown for generic timers.
+        // Mindful sessions (breathing/meditation) use their own cue scripts.
         const owningSession = Object.values(activitySessions).find(
-            session => session.label === (timer.label || '') && simpleTypes.includes(session.type as any)
+            session => session.label === (timer.label || '') && session.type === 'timer'
         );
-        if (!owningSession) {
-            // For workouts and other complex activities, rely on GuidanceExecutor's own
-            // 3-2-1 / 10-second cues instead of this shared countdown.
+        if (!owningSession || !shouldUseSharedNumericCountdown(owningSession.type, owningSession.intent)) {
             lastSpokenSecondRef.current = null;
             return;
         }
@@ -663,10 +723,57 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
     }, [activeTimer, liveStatus]);
 
 
-    const handleActivityControl = useCallback((action: 'pause' | 'resume' | 'skip' | 'stop' | 'back') => {
+    const handleActivityControl = useCallback((action: 'start' | 'pause' | 'resume' | 'skip' | 'stop' | 'back' | 'reset') => {
         console.log(`Activity Control: ${action}`);
+        const normalizedAction = action === 'start' ? 'resume' : action;
 
-        if (action === 'pause') {
+        if (normalizedAction === 'reset') {
+            const hadGuidedActivity = !!guidedActivityIdRef.current;
+            const hadActiveTimer = !!activeTimer;
+
+            if (guidedActivityIdRef.current) {
+                stopActivity(guidedActivityIdRef.current);
+                guidedActivityIdRef.current = null;
+            }
+
+            if (activeTimer) {
+                setActiveTimer(prev => {
+                    if (!prev) return null;
+                    return {
+                        ...prev,
+                        isRunning: false,
+                        remainingSeconds: prev.totalSeconds,
+                        startedAt: undefined,
+                        remainingAtPause: undefined
+                    };
+                });
+            }
+
+            if (workoutProgress) {
+                setWorkoutProgress(prev => {
+                    if (!prev) return null;
+                    const durationMs = (prev.timerDuration || 0) * 1000;
+                    return {
+                        ...prev,
+                        isTimerRunning: false,
+                        timerStartTime: undefined,
+                        timerRemainingAtPause: durationMs
+                    };
+                });
+            }
+
+            if (hadGuidedActivity || hadActiveTimer) {
+                setCurrentWorkoutProgress(null);
+                stopGuidance();
+                timerActivityConfigRef.current = null;
+                guidanceRouteUntilRef.current = 0;
+            } else {
+                pauseGuidance();
+            }
+            return;
+        }
+
+        if (normalizedAction === 'pause') {
             if (guidedActivityIdRef.current) {
                 pauseActivity(guidedActivityIdRef.current);
             } else if (activeTimer) {
@@ -696,7 +803,7 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
             pauseGuidance();
         }
 
-        if (action === 'resume') {
+        if (normalizedAction === 'resume') {
             if (guidedActivityIdRef.current) {
                 // Resume ActivityEngine timer first
                 resumeActivity(guidedActivityIdRef.current);
@@ -764,72 +871,15 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
             }
         }
 
-        if (action === 'skip') {
-            if (currentWorkoutProgress) {
-                setCurrentWorkoutProgress((prev: any) => {
-                    if (!prev) return null;
-                    const updatedExercises = [...prev.exercises];
-                    const currentIndex = updatedExercises.findIndex((e: any) => !e.completed);
-                    if (currentIndex !== -1) {
-                        updatedExercises[currentIndex].completed = true;
-                    }
-                    return { ...prev, exercises: updatedExercises };
-                });
-            }
-            if (workoutProgress) {
-                setWorkoutProgress(prev => {
-                    if (!prev) return null;
-                    const newIndex = prev.currentExerciseIndex + 1;
-                    const newCompleted = [...prev.completedIndices, prev.currentExerciseIndex];
-                    return {
-                        ...prev,
-                        currentExerciseIndex: newIndex,
-                        completedIndices: newCompleted,
-                        isTimerRunning: false,
-                        isResting: false
-                    };
-                });
-            }
-            // Note: GuidanceExecutor.skip() triggered internally by the hook if connected?
-            // Actually useLiveSession exposes nothing for 'skip' directly, 
-            // the Voice Command usually triggers "next/skip". 
-            // If this function is called via UI, we might need to tell LiveSession to skip?
-            // `sendMessageToLive("skip")`? Or is there a control method?
-            // The original App.tsx didn't call anything on `guidance` for skip/back from this function 
-            // except if it was triggered BY voice. 
-            // IF triggered by UI, we might want to inform the model.
-            // But strict refactor matches original behavior.
+        if (normalizedAction === 'skip') {
+            skipGuidance();
         }
 
-        if (action === 'back') {
-            // ... Similar implementation to App.tsx ...
-            if (currentWorkoutProgress) {
-                setCurrentWorkoutProgress((prev: any) => {
-                    if (!prev) return null;
-                    const currentIndex = prev.exercises.findIndex((e: any) => !e.completed);
-                    if (currentIndex <= 0) return prev;
-                    const updatedExercises = [...prev.exercises];
-                    updatedExercises[currentIndex - 1].completed = false;
-                    return { ...prev, exercises: updatedExercises };
-                });
-            }
-            if (workoutProgress) {
-                setWorkoutProgress(prev => {
-                    if (!prev || prev.currentExerciseIndex <= 0) return prev;
-                    const newIndex = prev.currentExerciseIndex - 1;
-                    const newCompleted = prev.completedIndices.filter(i => i !== newIndex);
-                    return {
-                        ...prev,
-                        currentExerciseIndex: newIndex,
-                        completedIndices: newCompleted,
-                        isTimerRunning: false,
-                        isResting: false
-                    };
-                });
-            }
+        if (normalizedAction === 'back') {
+            goBackGuidance();
         }
 
-        if (action === 'stop') {
+        if (normalizedAction === 'stop') {
             if (guidedActivityIdRef.current) {
                 stopActivity(guidedActivityIdRef.current);
                 guidedActivityIdRef.current = null;
@@ -839,17 +889,18 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
             setWorkoutProgress(null);
             stopGuidance();
             timerActivityConfigRef.current = null;
+            guidanceRouteUntilRef.current = 0;
             // Clear completion tracking when workout stops
             if (activeWorkoutMessageIdRef.current) {
                 workoutCompletionHandledRef.current.delete(activeWorkoutMessageIdRef.current);
             }
         }
-    }, [activeTimer, workoutProgress, currentWorkoutProgress, setActiveTimer, setWorkoutProgress, setCurrentWorkoutProgress, pauseGuidance, resumeGuidance, startGuidanceForTimer, stopGuidance, liveStatus, pauseActivity, resumeActivity, stopActivity]);
+    }, [activeTimer, workoutProgress, setActiveTimer, setWorkoutProgress, pauseGuidance, resumeGuidance, skipGuidance, goBackGuidance, startGuidanceForTimer, stopGuidance, liveStatus, pauseActivity, resumeActivity, stopActivity]);
 
     // Wire ActivityEngine ticks into the GuidanceExecutor for tick-driven activities
     useEffect(() => {
         const unsubscribe = registerActivityListener(event => {
-            if (event.type !== 'tick' || !event.timer) return;
+            if ((event.type !== 'tick' && event.type !== 'completed') || !event.timer) return;
             // Only route timer/breathing/meditation activity events for now –
             // workouts maintain their own richer scheduling until fully migrated.
             if (event.session.type === 'timer' || event.session.type === 'breathing' || event.session.type === 'meditation') {

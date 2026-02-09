@@ -8,6 +8,7 @@
     "dev": "vite",
     "dev:api": "tsx scripts/dev-api-server.ts",
     "eval:opik": "tsx scripts/run-opik-eval.ts",
+    "eval:opik:threads": "tsx scripts/run-opik-eval-threads.ts",
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest",

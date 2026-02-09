@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { Send, Mic, Trash2 } from 'lucide-react';
+import { Send, Trash2 } from 'lucide-react';
 import { ChatInterface } from './ChatInterface';
 import { VoiceControls } from './VoiceControls';
 import { AuthButton } from './AuthButton';
@@ -7,18 +7,37 @@ import { Button } from './ui/Button';
 import { useAppContext } from '../contexts/AppContext';
 import { useLiveSessionContext } from '../contexts/LiveSessionContext';
 import { LiveStatus } from '../types';
+import { ZenLogo } from './ZenLogo';
 
-// Claude-inspired Zen Logo Component
-const ZenLogo = () => (
-    <svg width="26" height="26" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+
+
+// Creative Voice Mode Icon - Voice waveform visualizer
+const VoiceModeIcon = ({ className = "w-6 h-6" }: { className?: string }) => (
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
         <defs>
-            <linearGradient id="logoGradientClaude" x1="0%" y1="0%" x2="100%" y2="100%">
+            <linearGradient id="voiceGradient" x1="0%" y1="0%" x2="100%" y2="100%">
                 <stop offset="0%" stopColor="#E87A38" />
                 <stop offset="100%" stopColor="#D96922" />
             </linearGradient>
         </defs>
-        <circle cx="16" cy="16" r="11" stroke="url(#logoGradientClaude)" strokeWidth="3" fill="none" strokeLinecap="round" strokeDasharray="55 14" />
-        <circle cx="16" cy="16" r="4" fill="url(#logoGradientClaude)" />
+
+        {/* Voice waveform bars - audio visualizer style */}
+        <g className="group-hover:scale-110 transition-transform origin-center">
+            {/* Left outer bar */}
+            <rect x="2.5" y="8" width="3" height="8" rx="1.5" fill="url(#voiceGradient)" opacity="0.6" />
+
+            {/* Left inner bar */}
+            <rect x="6.5" y="5" width="3" height="14" rx="1.5" fill="url(#voiceGradient)" opacity="0.85" />
+
+            {/* Center bar - tallest - fully opaque */}
+            <rect x="10.5" y="3" width="3" height="18" rx="1.5" fill="url(#voiceGradient)" />
+
+            {/* Right inner bar */}
+            <rect x="14.5" y="5" width="3" height="14" rx="1.5" fill="url(#voiceGradient)" opacity="0.85" />
+
+            {/* Right outer bar */}
+            <rect x="18.5" y="8" width="3" height="8" rx="1.5" fill="url(#voiceGradient)" opacity="0.6" />
+        </g>
     </svg>
 );
 
@@ -27,6 +46,7 @@ export const AppLayout: React.FC = () => {
         messages,
         isTyping,
         supabaseUserId,
+        onboardingState,
         handleActionWrapper,
         handleSendMessage,
         addMessageToChat,
@@ -128,7 +148,7 @@ export const AppLayout: React.FC = () => {
                     <div className="relative group">
                         <div className="absolute inset-0 bg-gradient-to-br from-claude-400 to-claude-600 rounded-xl sm:rounded-2xl blur-xl opacity-30 group-hover:opacity-50 transition-opacity duration-500"></div>
                         <div className="relative w-10 h-10 sm:w-12 sm:h-12 bg-white border border-sand-200 rounded-xl sm:rounded-2xl flex items-center justify-center shadow-soft-md transform group-hover:scale-105 transition-all duration-300">
-                            <ZenLogo />
+                            <ZenLogo className="w-7 h-7" />
                         </div>
                     </div>
                     <div>
@@ -160,6 +180,7 @@ export const AppLayout: React.FC = () => {
                     messages={messages}
                     isTyping={isTyping}
                     userId={supabaseUserId || undefined}
+                    onboardingState={onboardingState}
                     onAction={handleAction}
                     onSendMessage={(text) => {
                         setInputValue(text);
@@ -222,7 +243,7 @@ export const AppLayout: React.FC = () => {
                                     data-testid="live-mode-toggle"
                                 >
                                     <div className="flex items-center justify-center">
-                                        <Mic className="w-4 h-4 sm:w-5 sm:h-5 group-hover:scale-110 transition-transform" />
+                                        <VoiceModeIcon className="w-5 h-5 sm:w-6 sm:h-6 group-hover:scale-110 transition-transform" />
                                         <span className="max-w-0 group-hover:max-w-[100px] opacity-0 group-hover:opacity-100 transition-all duration-500 ease-in-out overflow-hidden whitespace-nowrap ml-0 group-hover:ml-2 text-xs sm:text-sm font-semibold tracking-tight">
                                             Live Mode
                                         </span>
@@ -237,7 +258,7 @@ export const AppLayout: React.FC = () => {
                                     disabled={!inputValue.trim()}
                                     data-testid="send-message-button"
                                 >
-                                    <Send className="w-4 h-4 sm:w-5 sm:h-5 ml-0.5" />
+                                    <Send className="w-4 h-4 sm:w-5 sm:h-5" />
                                 </Button>
                             )}
                         </div>

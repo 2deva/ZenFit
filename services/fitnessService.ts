@@ -177,7 +177,11 @@ export const getFitnessDataLast7Days = async (): Promise<FitnessDayRow[]> => {
     const buckets = data.bucket ?? [];
 
     return buckets.map((b: any) => {
-      const startMs = b.startTimeMillis ?? 0;
+      const startMs = parseInt(b.startTimeMillis, 10);
+      // Validate timestamp to prevent "Invalid Date" errors
+      if (!startMs || isNaN(startMs) || startMs <= 0) {
+        return { date: '', steps: 0, activeMinutes: 0 };
+      }
       const date = new Date(startMs).toISOString().split('T')[0];
       const datasets = b.dataset ?? [];
       const getVal = (idx: number) => {
@@ -191,7 +195,7 @@ export const getFitnessDataLast7Days = async (): Promise<FitnessDayRow[]> => {
         steps: getVal(0),
         activeMinutes: getVal(1)
       };
-    });
+    }).filter((row: FitnessDayRow) => row.date !== ''); // Filter out invalid rows
   } catch (e) {
     console.warn('getFitnessDataLast7Days failed:', e);
     return [];
