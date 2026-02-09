@@ -171,3 +171,8 @@ Results appear under **Evaluation → Optimization runs** in the Opik dashboard.
 
 ### How Opik improves ZenFit
 We trace every chat and log Live session summaries; we run the 23-scenario eval and log experiments; we use the Agent Optimizer to improve our system prompt and deploy the best variant. So **Opik directly drives the behaviors that help users stick** — action first, low friction, re-engagement support, and safety. For judging: link to our Opik project and screenshots of **Traces**, **Experiments** (e.g. `zenfit-eval-run-2`), and **Optimization runs** are in the submission or under `docs/opik/`.
+
+<img width="1661" height="727" alt="image" src="https://github.com/user-attachments/assets/34b79056-7c0e-426b-af71-2049c328dcef" />
+<img width="1658" height="737" alt="image" src="https://github.com/user-attachments/assets/f51ca840-a2df-400f-b407-2f77fdcd566f" />
+
+
