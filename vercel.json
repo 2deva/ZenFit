@@ -11,7 +11,7 @@
     }
   ],
   "functions": {
-    "api/chat.ts": {
+    "api/opik/chat.ts": {
       "includeFiles": "services/**"
     }
   },
