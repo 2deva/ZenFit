@@ -13,6 +13,9 @@
   "functions": {
     "api/opik/chat.ts": {
       "includeFiles": "services/**"
+    },
+    "api/opik/live.ts": {
+      "includeFiles": "types.js"
     }
   },
   "rewrites": [

@@ -5,7 +5,7 @@
 
 import { GoogleGenAI, Type, type FunctionDeclaration } from "@google/genai";
 import { trackGemini } from "opik-gemini";
-import { inferIntent, inferUserState } from "./_shared";
+import { inferIntent, inferUserState } from "./_shared.js";
 
 // Keep this file self-contained for Vercel Functions.
 // Root cause fixed: avoid cross-folder imports that Vercel bundling may omit.
@@ -279,13 +279,13 @@ export default async function handler(
     const tags = ["zenfit", "gemini", `intent:${intent}`, `state:${userState}`, "mode:text"];
     const client = opikKey
       ? trackGemini(genAI, {
-          projectName: opikProject,
-          traceMetadata: {
-            tags,
-            component: "zenfit-app",
-          },
-          generationName: "Zenfit",
-        })
+        projectName: opikProject,
+        traceMetadata: {
+          tags,
+          component: "zenfit-app",
+        },
+        generationName: "Zenfit",
+      })
       : genAI;
 
     const history = messages.slice(-MAX_HISTORY_MESSAGES).map((m: { role: string; text: string }) => ({

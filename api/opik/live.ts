@@ -5,8 +5,8 @@
  */
 
 import { Opik } from "opik";
-import type { EvaluationSignals } from "../../types";
-import { inferIntent, inferUserState, normalizeTurns } from "./_shared";
+import type { EvaluationSignals } from "../../types.js";
+import { inferIntent, inferUserState, normalizeTurns } from "./_shared.js";
 
 const DATASET_NAME = "zenfit-live-sessions";
 const EXPERIMENT_NAME = "zenfit-live-obs-1";
