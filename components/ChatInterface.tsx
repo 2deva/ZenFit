@@ -308,7 +308,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 icon: <Dumbbell className="w-6 h-6" />,
                 title: "Morning Mobility",
                 description: "Feel looser in 5 minutes.",
-                action: "I want to set up a morning mobility session. Show the workoutBuilder first with focus, duration, level, and equipment options so I can choose, then generate the workout from my selection.",
+                action: "I want a morning mobility session. Let me customize it with the workout builder.",
                 isLive: true
             });
         } else if (timeOfDay === 'afternoon') {
@@ -317,7 +317,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 icon: <Dumbbell className="w-6 h-6" />,
                 title: "Energy Boost",
                 description: "Reset focus and energy fast.",
-                action: "I want an energy boost workout. Show the workoutBuilder first with focus, duration, level, and equipment options so I can select my preferences before you generate the workout.",
+                action: "I need a quick energy boost workout. Let me pick my preferences with the workout builder.",
                 isLive: true
             });
         } else {
@@ -326,7 +326,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 icon: <Moon className="w-6 h-6" />,
                 title: "Wind Down",
                 description: "Ease stress before sleep.",
-                action: "I want to wind down with movement. Show the workoutBuilder first so I can choose duration and intensity, then generate a session from my selections.",
+                action: "I want to wind down before bed. Let me set up a calming session with the workout builder.",
                 isLive: true
             });
         }
@@ -337,7 +337,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             icon: <Wind className="w-6 h-6" />,
             title: "Breathwork",
             description: "Calm your nervous system now.",
-            action: "Set up a guided box-breathing timer first with clear duration and voice-cue style, help me feel calmer within 2 minutes, then ask if I want to start or deepen the next round.",
+            action: "I want to do a 2-minute box breathing session. Set up a breathing timer for me.",
             isLive: true
         });
 
@@ -348,7 +348,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 icon: <Target className="w-6 h-6" />,
                 title: "Set Goals",
                 description: "Build your personal plan.",
-                action: "Help me set goals in a way that feels easy to start today. Recommend the best first focus for me, ask one key question, and then propose my first small session.",
+                action: "Help me set my first fitness goals and suggest a small session I can start with today.",
                 isLive: false
             });
         } else {
