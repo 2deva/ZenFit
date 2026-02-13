@@ -1,4 +1,4 @@
-﻿
+
 import React from 'react';
 import { Message } from '../types';
 import { MessageBubble } from './MessageBubble';
@@ -301,14 +301,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     const getContextCards = () => {
         const cards = [];
 
-        // 1. Primary Action (Workout/Movement) - Time context. Prompts trigger immediate delivery + live (per system: do for user, action first).
+        // 1. Primary Action (Workout/Movement) - Time context. Simple, direct prompts that start a session.
         if (timeOfDay === 'morning') {
             cards.push({
                 id: 'morning-flow',
                 icon: <Dumbbell className="w-6 h-6" />,
                 title: "Morning Mobility",
                 description: "Feel looser in 5 minutes.",
-                action: "I want a morning mobility session. Let me customize it with the workout builder.",
+                action: "Start a 5-minute gentle morning mobility session tailored to me.",
                 isLive: true
             });
         } else if (timeOfDay === 'afternoon') {
@@ -317,7 +317,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 icon: <Dumbbell className="w-6 h-6" />,
                 title: "Energy Boost",
                 description: "Reset focus and energy fast.",
-                action: "I need a quick energy boost workout. Let me pick my preferences with the workout builder.",
+                action: "Start a 5-minute energizing movement session to boost my focus.",
                 isLive: true
             });
         } else {
@@ -326,18 +326,18 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 icon: <Moon className="w-6 h-6" />,
                 title: "Wind Down",
                 description: "Ease stress before sleep.",
-                action: "I want to wind down before bed. Let me set up a calming session with the workout builder.",
+                action: "Start a 5-minute calming mobility session to help me wind down before sleep.",
                 isLive: true
             });
         }
 
-        // 2. Secondary Action (Mindfulness). Specific ask â†’ timer/breathing UI + live.
+        // 2. Secondary Action (Mindfulness). Clear ask for guided breathing with timing.
         cards.push({
             id: 'breathing',
             icon: <Wind className="w-6 h-6" />,
             title: "Breathwork",
             description: "Calm your nervous system now.",
-            action: "I want to do a 2-minute box breathing session. Set up a breathing timer for me.",
+            action: "Guide me through a 2-minute box breathing exercise with pacing cues.",
             isLive: true
         });
 
@@ -348,7 +348,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 icon: <Target className="w-6 h-6" />,
                 title: "Set Goals",
                 description: "Build your personal plan.",
-                action: "Help me set my first fitness goals and suggest a small session I can start with today.",
+                action: "Help me set simple fitness goals and a tiny first session for today.",
                 isLive: false
             });
         } else {
@@ -357,7 +357,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 icon: <BarChart2 className="w-6 h-6" />,
                 title: "Progress",
                 description: "See wins and next best move.",
-                action: "Show my progress this week and highlight one meaningful win plus one concrete next step I can do today.",
+                action: "Summarize my progress this week and suggest one small action for today.",
                 isLive: false
             });
         }
@@ -368,7 +368,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             icon: <MessageCircle className="w-6 h-6" />,
             title: "Just Chat",
             description: "Get clarity, no pressure.",
-            action: "I just want to talk for a minute, no workout yet. Help me quickly identify what I need most right now and offer two tiny options I can choose from.",
+            action: "Let's chat briefly so you can help me decide what I need most right now.",
             isLive: false
         });
 
@@ -382,7 +382,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         <div className="absolute inset-0 flex flex-col">
             {/* Empty State - Centered Pill Design */}
             {filteredMessages.length === 0 && (
-                <div className="absolute inset-0 flex flex-col px-4 sm:px-6 z-10">
+                <div className="absolute inset-0 flex flex-col px-4 sm:px-6 z-10 overflow-y-auto no-scrollbar">
                     {/* Centered Content */}
                     <div className="flex-1 flex flex-col justify-center items-center max-w-4xl mx-auto w-full">
                         {/* Greeting */}

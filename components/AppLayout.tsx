@@ -129,7 +129,7 @@ export const AppLayout: React.FC = () => {
     };
 
     return (
-        <div className="fixed inset-0 flex flex-col bg-sand-50 noise">
+        <div className="min-h-screen flex flex-col bg-sand-50 noise">
 
             {/* Background container - clips overflow */}
             <div className="absolute inset-0 overflow-hidden pointer-events-none">
@@ -203,83 +203,89 @@ export const AppLayout: React.FC = () => {
                 />
             </div>
 
-            {/* Floating Input Capsule - Fixed at bottom, hidden on empty state */}
-            <div ref={inputContainerRef} className={`flex-shrink-0 px-3 sm:px-4 py-3 sm:py-4 z-30 relative transition-opacity duration-300 ${messages.length === 0 ? 'opacity-0 pointer-events-none' : 'opacity-100'}`} style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
-                {(liveStatus === LiveStatus.DISCONNECTED && !errorMessage) ? (
-                    <div
-                        className={`
+            {/* Floating Input Capsule - Fixed at bottom (only when there is history) */}
+            {messages.length > 0 && (
+                <div
+                    ref={inputContainerRef}
+                    className="flex-shrink-0 px-3 sm:px-4 py-3 sm:py-4 z-30 relative transition-opacity duration-300 opacity-100"
+                    style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
+                >
+                    {(liveStatus === LiveStatus.DISCONNECTED && !errorMessage) ? (
+                        <div
+                            className={`
                         mx-auto bg-white/95 backdrop-blur-xl rounded-2xl sm:rounded-[28px] p-1.5 sm:p-2 flex items-center space-x-1.5 sm:space-x-2 transition-all duration-500 ease-out
                         ${isFocused ? 'max-w-3xl border-claude-400/60 shadow-glow-claude' : 'max-w-2xl border-sand-300 shadow-soft-lg'}
                     `}
-                    >
+                        >
 
-                        <textarea
-                            ref={textareaRef}
-                            value={inputValue}
-                            onChange={(e) => {
-                                setInputValue(e.target.value);
-                                adjustTextareaHeight();
-                            }}
-                            onFocus={() => {
-                                setIsFocused(true);
-                                setTimeout(adjustTextareaHeight, 0);
-                            }}
-                            onBlur={() => setIsFocused(false)}
-                            onKeyDown={handleKeyDown}
-                            placeholder="What's on your mind?"
-                            className="flex-1 bg-transparent border-none outline-none focus:outline-none focus:border-none focus:ring-0 resize-none py-2.5 sm:py-3 px-3 sm:px-5 text-ink-800 placeholder:text-ink-300 text-sm sm:text-[15px] leading-relaxed font-body font-medium appearance-none shadow-none no-scrollbar"
-                            rows={1}
-                            style={{ minHeight: '44px', maxHeight: '200px', height: 'auto', boxShadow: 'none' }}
-                            data-testid="chat-textarea"
-                        />
+                            <textarea
+                                ref={textareaRef}
+                                value={inputValue}
+                                onChange={(e) => {
+                                    setInputValue(e.target.value);
+                                    adjustTextareaHeight();
+                                }}
+                                onFocus={() => {
+                                    setIsFocused(true);
+                                    setTimeout(adjustTextareaHeight, 0);
+                                }}
+                                onBlur={() => setIsFocused(false)}
+                                onKeyDown={handleKeyDown}
+                                placeholder="What's on your mind?"
+                                className="flex-1 bg-transparent border-none outline-none focus:outline-none focus:border-none focus:ring-0 resize-none py-2.5 sm:py-3 px-3 sm:px-5 text-ink-800 placeholder:text-ink-300 text-sm sm:text-[15px] leading-relaxed font-body font-medium appearance-none shadow-none no-scrollbar"
+                                rows={1}
+                                style={{ minHeight: '44px', maxHeight: '200px', height: 'auto', boxShadow: 'none' }}
+                                data-testid="chat-textarea"
+                            />
 
-                        {/* Action Buttons */}
-                        <div className="flex items-center gap-1.5 sm:gap-2 pr-0.5 sm:pr-1">
-                            {!inputValue.trim() ? (
-                                <button
-                                    onClick={toggleLive}
-                                    className="h-9 sm:h-11 px-0 sm:px-0 flex items-center justify-center text-ink-400 hover:text-claude-600 transition-all duration-500 ease-in-out rounded-full hover:bg-claude-50 group overflow-hidden bg-transparent border-none min-w-[36px] sm:min-w-[44px] hover:min-w-[110px] sm:hover:min-w-[130px] hover:px-4"
-                                    title="Live Mode"
-                                    data-testid="live-mode-toggle"
-                                >
-                                    <div className="flex items-center justify-center">
-                                        <VoiceModeIcon className="w-5 h-5 sm:w-6 sm:h-6 group-hover:scale-110 transition-transform" />
-                                        <span className="max-w-0 group-hover:max-w-[100px] opacity-0 group-hover:opacity-100 transition-all duration-500 ease-in-out overflow-hidden whitespace-nowrap ml-0 group-hover:ml-2 text-xs sm:text-sm font-semibold tracking-tight">
-                                            Live Mode
-                                        </span>
-                                    </div>
-                                </button>
-                            ) : (
-                                <Button
-                                    onClick={() => handleSendMessage()}
-                                    variant="primary"
-                                    size="icon"
-                                    className="h-9 w-9 sm:h-11 sm:w-11 rounded-full"
-                                    disabled={!inputValue.trim()}
-                                    data-testid="send-message-button"
-                                >
-                                    <Send className="w-4 h-4 sm:w-5 sm:h-5" />
-                                </Button>
-                            )}
+                            {/* Action Buttons */}
+                            <div className="flex items-center gap-1.5 sm:gap-2 pr-0.5 sm:pr-1">
+                                {!inputValue.trim() ? (
+                                    <button
+                                        onClick={toggleLive}
+                                        className="h-9 sm:h-11 px-0 sm:px-0 flex items-center justify-center text-ink-400 hover:text-claude-600 transition-all duration-500 ease-in-out rounded-full hover:bg-claude-50 group overflow-hidden bg-transparent border-none min-w-[36px] sm:min-w-[44px] hover:min-w-[110px] sm:hover:min-w-[130px] hover:px-4"
+                                        title="Live Mode"
+                                        data-testid="live-mode-toggle"
+                                    >
+                                        <div className="flex items-center justify-center">
+                                            <VoiceModeIcon className="w-5 h-5 sm:w-6 sm:h-6 group-hover:scale-110 transition-transform" />
+                                            <span className="max-w-0 group-hover:max-w-[100px] opacity-0 group-hover:opacity-100 transition-all duration-500 ease-in-out overflow-hidden whitespace-nowrap ml-0 group-hover:ml-2 text-xs sm:text-sm font-semibold tracking-tight">
+                                                Live Mode
+                                            </span>
+                                        </div>
+                                    </button>
+                                ) : (
+                                    <Button
+                                        onClick={() => handleSendMessage()}
+                                        variant="primary"
+                                        size="icon"
+                                        className="h-9 w-9 sm:h-11 sm:w-11 rounded-full"
+                                        disabled={!inputValue.trim()}
+                                        data-testid="send-message-button"
+                                    >
+                                        <Send className="w-4 h-4 sm:w-5 sm:h-5" />
+                                    </Button>
+                                )}
+                            </div>
                         </div>
-                    </div>
-                ) : (
-                    <div className="max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
-                        <VoiceControls
-                            status={liveStatus === 'connected' ? LiveStatus.CONNECTED : liveStatus === 'connecting' ? LiveStatus.CONNECTING : LiveStatus.DISCONNECTED}
-                            onToggle={toggleLive}
-                            audioDataRef={audioDataRef}
-                            isInterrupted={isInterrupted}
-                            variant="inline"
-                            isMuted={liveIsMuted}
-                            onMuteToggle={() => setLiveIsMuted(!liveIsMuted)}
-                            connectionQuality={liveStatus === LiveStatus.CONNECTED ? connectionQuality : undefined}
-                            isProcessing={isProcessing}
-                            errorMessage={errorMessage}
-                        />
-                    </div>
-                )}
-            </div>
+                    ) : (
+                        <div className="max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
+                            <VoiceControls
+                                status={liveStatus === 'connected' ? LiveStatus.CONNECTED : liveStatus === 'connecting' ? LiveStatus.CONNECTING : LiveStatus.DISCONNECTED}
+                                onToggle={toggleLive}
+                                audioDataRef={audioDataRef}
+                                isInterrupted={isInterrupted}
+                                variant="inline"
+                                isMuted={liveIsMuted}
+                                onMuteToggle={() => setLiveIsMuted(!liveIsMuted)}
+                                connectionQuality={liveStatus === LiveStatus.CONNECTED ? connectionQuality : undefined}
+                                isProcessing={isProcessing}
+                                errorMessage={errorMessage}
+                            />
+                        </div>
+                    )}
+                </div>
+            )}
 
             {/* Wellness disclaimer (general wellness, not medical advice) */}
             <footer className="flex-shrink-0 px-3 sm:px-4 py-2 text-center">
