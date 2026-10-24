@@ -4,7 +4,7 @@ test('evaluates offline replay, row isolation and timer controls without externa
   const externalRequests: string[] = [];
   page.on('request', request => { if (!request.url().startsWith('http://127.0.0.1:5174') && !request.url().startsWith('ws://127.0.0.1:5174')) externalRequests.push(request.url()); });
   await page.goto('/evaluation.html');
-  await expect(page.getByRole('status')).toContainText('Ready');
+  await expect(page.getByRole('status').filter({ hasText: 'Ready' })).toContainText('Ready');
   await page.getByRole('button', { name: 'Go offline', exact: true }).click();
   await page.getByRole('button', { name: 'Complete 1', exact: true }).click();
   await expect(page.getByTestId('queued')).toHaveText('1');
