@@ -32,7 +32,7 @@ jobs:
       - name: Production build
         run: npm run build
       - name: Upload coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-node-${{ matrix.node }}
           path: coverage/
@@ -74,7 +74,7 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Exercise isolated evaluation in the browser
         run: npm run test:e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: browser-failures
