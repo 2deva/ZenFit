@@ -1,0 +1,22 @@
+services:
+  api:
+    build: .
+    command: npm run dev:api
+    env_file: .env.local
+    ports:
+      - "127.0.0.1:3001:3001"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  web:
+    build: .
+    env_file: .env.local
+    environment:
+      API_PROXY_TARGET: http://api:3001
+    ports:
+      - "127.0.0.1:5173:5173"
+    depends_on:
+      api:
+        condition: service_healthy

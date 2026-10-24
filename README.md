@@ -85,15 +85,15 @@ Fitness happens everywhere—often where Wi-Fi is weak. Zenfit's `SyncService` e
 
 ### 🔒 Security & Privacy
 *   **Auth**: Firebase Authentication (Google Sign-In).
-*   **Data**: Row Level Security (RLS) policies on Supabase ensure you only access your own data.
-*   **AI**: No personal data is used for model training; context is injected ephemerally.
+*   **Data**: Several checked-in SQL scripts use permissive RLS policies. They do not isolate users; see [database security limitations](supabase/README.md#authorization-limitations).
+*   **AI**: Session context is sent to configured AI services. Review their data settings and retention policies for your deployment.
 
 ---
 
 ## 🚀 Getting Started
 
 ### Prerequisites
-*   Node.js 18+
+*   Node.js 22.12+ (see `.nvmrc`)
 *   Google Cloud Project (Gemini API)
 *   Supabase Project
 *   Firebase Project
@@ -101,7 +101,7 @@ Fitness happens everywhere—often where Wi-Fi is weak. Zenfit's `SyncService` e
 ### Installation
 
 1.  **Environment Setup**
-    Create `.env.local`:
+    Run `npm ci`, then `cp .env.example .env.local` and fill in the required values:
     ```env
     # Core API Keys
     GEMINI_API_KEY=your_key_here
@@ -128,7 +128,58 @@ Fitness happens everywhere—often where Wi-Fi is weak. Zenfit's `SyncService` e
 2.  **Run Development Server**
     ```bash
     npm run dev
+    # In another terminal, for chat tracing and Calendar API routes:
+    npm run dev:api
     ```
+
+    Open http://localhost:5173. The frontend proxies `/api` to port 3001.
+    Both processes read `.env.local`; hosted Firebase, Supabase and Gemini
+    services require your own project configuration.
+
+### Tests and engineering checks
+
+```bash
+npm run typecheck
+npm run lint:eslint
+npm test -- --run
+npm run test:coverage
+npm run build
+# Runs lint/typecheck, coverage gates, and build together:
+npm run check
+```
+
+Tests use local fixtures and mocked network boundaries; no paid API calls or
+credentials are needed. Coverage includes untested source files. Global floors
+start at 18% lines, 17% statements, 16% functions/branches; the session generator,
+cue planners, scheduler and input validation have higher gates. See
+[engineering quality](docs/engineering-quality.md) for scope and remaining gaps.
+GitHub Actions runs checks on Node 22 and 24 plus container startup tests on
+pushes and pull requests. Dependabot checks npm and Actions dependencies weekly.
+
+### Container startup
+
+```bash
+cp .env.example .env.local
+# Fill in your development project credentials, then:
+docker compose up --build --wait
+```
+
+Open http://localhost:5173; health check: http://localhost:5173/api/health.
+`docker compose down` stops both processes. Compose runs the frontend and API;
+Firebase, Supabase, Gemini and optional Opik remain hosted dependencies. Empty
+credentials are sufficient for the server health checks, but sign-in and AI
+features need configured projects. Microphone access on remote hosts requires
+HTTPS. A Node 22 devcontainer is also available.
+
+### Database setup
+
+See [supabase/README.md](supabase/README.md) for script order, data flows and
+existing authorization limitations before connecting a database.
+
+### Contributions
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for small-change and verification guidelines.
+
 
 ### Deployment (Vercel)
 Zenfit is "Vercel-Ready".
@@ -176,3 +227,7 @@ We trace every chat and log Live session summaries; we run the 23-scenario eval 
 <img width="1658" height="737" alt="image" src="https://github.com/user-attachments/assets/f51ca840-a2df-400f-b407-2f77fdcd566f" />
 
 
+
+## Maintenance
+
+See [CHANGELOG.md](CHANGELOG.md) for repository changes and [engineering quality](docs/engineering-quality.md) for verification scope.

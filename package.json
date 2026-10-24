@@ -4,15 +4,18 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "lint": "tsc --noEmit",
+    "lint": "npm run typecheck && npm run lint:eslint",
     "dev": "vite",
-    "dev:api": "tsx scripts/dev-api-server.ts",
+    "dev:api": "node --env-file-if-exists=.env.local --import tsx scripts/dev-api-server.ts",
     "eval:opik": "tsx scripts/run-opik-eval.ts",
     "eval:opik:threads": "tsx scripts/run-opik-eval-threads.ts",
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest",
-    "test:ui": "vitest --ui"
+    "typecheck": "tsc --noEmit",
+    "lint:eslint": "eslint . --max-warnings 0",
+    "test:coverage": "vitest run --coverage",
+    "check": "npm run lint && npm run test:coverage && npm run build"
   },
   "dependencies": {
     "@google/genai": "^1.37.0",

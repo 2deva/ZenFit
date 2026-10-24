@@ -8,7 +8,7 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       proxy: {
-        '/api': 'http://localhost:3001',
+        '/api': env.API_PROXY_TARGET || 'http://localhost:3001',
       },
       headers: {
         'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
@@ -21,7 +21,6 @@ export default defineConfig(({ mode }) => {
       'process.env.SUPABASE_URL': JSON.stringify(env.VITE_SUPABASE_URL),
       'process.env.SUPABASE_ANON_KEY': JSON.stringify(env.VITE_SUPABASE_ANON_KEY),
       // Opik tracing (workspace default: zenfit)
-      'process.env.OPIK_API_KEY': JSON.stringify(env.VITE_OPIK_API_KEY || env.OPIK_API_KEY || ''),
       'process.env.OPIK_PROJECT_NAME': JSON.stringify(env.VITE_OPIK_PROJECT_NAME || env.OPIK_PROJECT_NAME || 'zenfit'),
     },
     resolve: {
