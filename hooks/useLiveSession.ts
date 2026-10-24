@@ -643,20 +643,49 @@ export const useLiveSession = ({
       }
     }
 
+    // Close the session explicitly
+    if (sessionPromiseRef.current) {
+      sessionPromiseRef.current.then(session => {
+        try {
+          if (session && typeof session.close === 'function') {
+            session.close();
+          }
+        } catch (e) { console.warn('Error closing session:', e); }
+      }).catch(() => { });
+    }
+
+    sessionPromiseRef.current = null;
+    sessionRef.current = null; // Clear session reference
+    cleanupAudio();
+    setStatus(LiveStatus.DISCONNECTED);
+
+    // Reset state
+    setPaceState(createPaceState('normal'));
+    audioQualityRef.current = createAudioQualityState();
+    clarificationRef.current = createClarificationState();
+
+    // Snapshot this session before asynchronous logging; reconnect may start immediately.
+    const meta = liveSessionMetaRef.current;
+    const shouldLog = !liveSessionLoggedRef.current && !!meta;
+    liveSessionLoggedRef.current = true;
+    liveSessionMetaRef.current = null;
+    const transcripts = getSessionTranscripts(30);
+    const summaryTask = generateSessionSummary();
+    const memoryTask = (userId ? extractAndStoreSessionSummary(userId) : Promise.resolve())
+      .catch(e => console.warn('Failed to store session memories:', e));
+    clearSessionBuffer();
+
     // Generate summary ONCE for Opik logging (best-effort)
     let opikSummary: any = null;
     try {
-      opikSummary = await generateSessionSummary();
+      opikSummary = await summaryTask;
     } catch (e) {
       console.warn('LiveSession: Failed to generate summary for Opik logging:', e);
     }
 
     // Log Live session to Opik (best-effort)
-    if (!liveSessionLoggedRef.current && liveSessionMetaRef.current) {
-      liveSessionLoggedRef.current = true;
+    if (shouldLog && meta) {
       try {
-        const meta = liveSessionMetaRef.current!;
-        const transcripts = getSessionTranscripts(30);
         const payload = {
           sessionId: meta.sessionId,
           startedAt: meta.startedAt,
@@ -690,37 +719,14 @@ export const useLiveSession = ({
     // Extract and store session summary for memory persistence
     if (userId) {
       try {
-        await extractAndStoreSessionSummary(userId);
+        await memoryTask;
         console.log('Session memories stored successfully');
       } catch (e) {
         console.warn('Failed to store session memories:', e);
       }
     }
 
-    // Close the session explicitly
-    if (sessionPromiseRef.current) {
-      sessionPromiseRef.current.then(session => {
-        try {
-          if (session && typeof session.close === 'function') {
-            session.close();
-          }
-        } catch (e) { console.warn('Error closing session:', e); }
-      }).catch(() => { });
-    }
 
-    sessionPromiseRef.current = null;
-    sessionRef.current = null; // Clear session reference
-    cleanupAudio();
-    setStatus(LiveStatus.DISCONNECTED);
-
-    // Reset state
-    setPaceState(createPaceState('normal'));
-    audioQualityRef.current = createAudioQualityState();
-    clarificationRef.current = createClarificationState();
-
-    // Clear transcript buffer for next session
-    clearSessionBuffer();
-    liveSessionMetaRef.current = null;
   }, [cleanupAudio, userId]);
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -1106,6 +1112,11 @@ export const useLiveSession = ({
   const connect = useCallback(async () => {
     if (isConnectedRef.current) return;
 
+    const abortController = new AbortController();
+    connectAbortControllerRef.current = abortController;
+    const isCurrentAttempt = () => !abortController.signal.aborted && connectAbortControllerRef.current === abortController;
+    let acquiredStream: MediaStream | null = null;
+
     try {
       console.log("Initializing Live Session...");
       liveSessionMetaRef.current = {
@@ -1122,10 +1133,6 @@ export const useLiveSession = ({
       setErrorMessage(null);
       manualDisconnectRef.current = false;
       wsClosingHandledRef.current = false;
-
-      // create new abort controller for this connection attempt
-      const abortController = new AbortController();
-      connectAbortControllerRef.current = abortController;
 
       setStatus(LiveStatus.CONNECTING);
       isConnectedRef.current = true;
@@ -1177,15 +1184,20 @@ export const useLiveSession = ({
         console.warn('Failed to check session resumption:', e);
       }
 
+      if (!isCurrentAttempt()) return;
+
       // 3. Setup Playback Context (Shared Singleton)
       // Use getSharedAudioContext to prevent browser resource exhaustion
       const audioContext = getSharedAudioContext();
       if (audioContext.state === 'suspended') {
         await audioContext.resume();
       }
+      if (!isCurrentAttempt()) return;
       audioContextRef.current = audioContext;
       // Best-effort: encourage speaker output on mobile when mic is active.
       await ensureMobileSpeakerOutput(audioContext);
+
+      if (!isCurrentAttempt()) return;
 
       // 4. Setup Input Stream (16kHz)
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -1197,12 +1209,12 @@ export const useLiveSession = ({
           noiseSuppression: true
         }
       });
-      streamRef.current = stream;
-
-      // CHECK ABORT
-      if (abortController.signal.aborted) {
-        throw new DOMException('Connection aborted by user', 'AbortError');
+      acquiredStream = stream;
+      if (!isCurrentAttempt()) {
+        stream.getTracks().forEach(track => track.stop());
+        return;
       }
+      streamRef.current = stream;
 
       // 5. Initiate Gemini Live Connection with enhanced config
       const sessionPromise = ai.live.connect({
@@ -1230,12 +1242,14 @@ export const useLiveSession = ({
         },
         callbacks: {
           onopen: () => {
+            if (!isCurrentAttempt()) return;
             console.log("Live Session Opened");
             setStatus(LiveStatus.CONNECTED);
             isSessionReadyRef.current = true;
 
             // Store session reference for GuidanceExecutor
             sessionPromise.then(sess => {
+              if (!isCurrentAttempt()) return;
               sessionRef.current = sess;
               console.log('LiveSession: Session reference stored for guidance');
 
@@ -1252,6 +1266,8 @@ export const useLiveSession = ({
                 } catch (e) {
                   console.warn('Failed to load guidance state:', e);
                 }
+
+                if (!isCurrentAttempt()) return;
 
                 // Process saved state if found
                 if (savedGuidanceState || savedExecutorState) {
@@ -1292,7 +1308,7 @@ export const useLiveSession = ({
 
                     clearAutoReconnectState();
                     setTimeout(() => {
-                      if (sess && isSessionReadyRef.current) {
+                      if (isCurrentAttempt() && sess && isSessionReadyRef.current) {
                         const remaining = contextTimer?.remainingSeconds;
                         const remainingText = typeof remaining === 'number'
                           ? ` with about ${Math.max(1, Math.round(remaining / 60))} minute${Math.max(1, Math.round(remaining / 60)) === 1 ? '' : 's'} left`
@@ -1344,7 +1360,7 @@ export const useLiveSession = ({
                       clearAutoReconnectState();
                       // }).catch(e => console.warn('Failed to clear auto-reconnect state:', e));
                       setTimeout(() => {
-                        if (sess && isSessionReadyRef.current) {
+                        if (isCurrentAttempt() && sess && isSessionReadyRef.current) {
                           const wasDisconnected = hasSavedGuidance && savedGuidanceState.status !== 'completed';
                           const isStretching = savedGuidanceState?.activityType === 'stretching';
                           const sessionLabel = isStretching ? 'stretching session' : 'workout';
@@ -1364,7 +1380,7 @@ export const useLiveSession = ({
                   }
                 }
               })();
-            });
+            }).catch(() => { /* Connection failure is handled below. */ });
 
             // Start Audio Processing
             (async () => {
@@ -1374,14 +1390,19 @@ export const useLiveSession = ({
 
                 const blob = new Blob([AUDIO_WORKLET_PROCESSOR_CODE], { type: 'application/javascript' });
                 const workletUrl = URL.createObjectURL(blob);
-                await inputContext.audioWorklet.addModule(workletUrl);
+                try {
+                  await inputContext.audioWorklet.addModule(workletUrl);
+                } finally {
+                  URL.revokeObjectURL(workletUrl);
+                }
+                if (!isCurrentAttempt()) return;
 
                 const source = inputContext.createMediaStreamSource(stream);
                 const workletNode = new AudioWorkletNode(inputContext, 'pcm-processor');
 
                 workletNode.port.onmessage = (e) => {
                   // Check both connected and session ready before processing
-                  if (!isConnectedRef.current || !isSessionReadyRef.current) return;
+                  if (!isCurrentAttempt() || !isConnectedRef.current || !isSessionReadyRef.current) return;
 
                   const inputData = e.data as Float32Array;
 
@@ -1451,6 +1472,7 @@ export const useLiveSession = ({
                 workletNodeRef.current = workletNode;
 
               } catch (err) {
+                if (!isCurrentAttempt()) return;
                 console.error("Audio Worklet Error:", err);
                 if (onErrorRef.current) onErrorRef.current('AUDIO_SETUP', 'Failed to initialize microphone');
                 disconnect(false);
@@ -1458,7 +1480,7 @@ export const useLiveSession = ({
             })();
           },
           onmessage: (msg: LiveServerMessage) => {
-            if (!isConnectedRef.current) return;
+            if (!isCurrentAttempt() || !isConnectedRef.current) return;
 
             // Handle async operations inside the callback
             (async () => {
@@ -2000,6 +2022,7 @@ export const useLiveSession = ({
           },
 
           onclose: () => {
+            if (!isCurrentAttempt()) return;
             console.log("Live Session Closed by Server");
             isSessionReadyRef.current = false; // Stop audio sending immediately
             setIsProcessing(false); // Reset processing state
@@ -2087,6 +2110,7 @@ export const useLiveSession = ({
           },
 
           onerror: (err) => {
+            if (!isCurrentAttempt()) return;
             console.error("Live Session Error:", err);
             setIsProcessing(false); // Reset on error
             if (onErrorRef.current) onErrorRef.current('CONNECTION_ERROR', 'Voice connection error occurred');
@@ -2095,8 +2119,19 @@ export const useLiveSession = ({
       });
 
       sessionPromiseRef.current = sessionPromise;
+      await sessionPromise;
 
     } catch (e: any) {
+      if (!isCurrentAttempt()) {
+        acquiredStream?.getTracks().forEach(track => track.stop());
+        return;
+      }
+      abortController.abort();
+      connectAbortControllerRef.current = null;
+      sessionPromiseRef.current = null;
+      sessionRef.current = null;
+      isSessionReadyRef.current = false;
+      cleanupAudio();
       console.error("Connection Failed:", e);
       let errorMsg = 'Failed to start Live session. Please try again.';
       if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
