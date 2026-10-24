@@ -1,53 +1,84 @@
-# Database setup and data flows
+# Database setup, evaluation and authorization
 
-These scripts target Supabase PostgreSQL with pgvector. Use an isolated test
-project first. They are historical setup scripts, not a versioned migration
-runner. Do not execute all files alphabetically against a production database.
+The schema targets Supabase PostgreSQL with pgvector. Run `npm run test:db` or
+`npm run demo` for an isolated, credential-free evaluation. See
+[the walkthrough](../docs/evaluation.md).
 
-## Setup order
+## Migration sequence
 
-1. `migration.sql`: base users, goals, sessions, streaks, memories, scheduled
-   events, Google integration tokens and nudge feedback; enables pgvector.
-2. `onboarding_state.sql`: onboarding state, user goal motivation and priority.
-3. `workout_progress.sql`: cross-device in-progress workout state.
-4. `message_sync_migration.sql`: cross-device messages.
+The checksummed, transactional evaluation runner is `scripts/db/migrations.ts`:
 
-`enable_rls.sql` and `fix_rls.sql` are alternative historical policy changes.
-They conflict with each other and are not sequential feature migrations.
-Review the authorization design before selecting or changing policies.
-Repeated application of some setup scripts can fail on existing policy names;
-the project currently has no verified migration idempotency guarantee.
+| Version | Purpose |
+| --- | --- |
+| `0001_baseline` | Historical base schema, onboarding, workout progress and message sync scripts |
+| `0002_application_metadata` | Goal links, message context/thread columns, message uniqueness, nonnegative duration/index constraints |
+| `0003_firebase_authorization` | Trusted Firebase project check, ownership RLS and server-only OAuth tokens |
 
-Some current application payloads reference optional `goal_ids`, `message_context`
-and `related_workout_id` columns that the historical scripts do not define.
-Message storage retries without its optional columns; workout schema changes
-need a reviewed migration for each deployment. Do not infer schema state from
-application types alone.
+The runner records versions/checksums in `private.schema_migrations`. Repeating it
+is a no-op; editing an applied migration fails with a checksum error. Add a new
+migration for future schema changes. Pending migrations apply in one transaction.
+The historical setup scripts also tolerate repeated policy creation.
+
+`enable_rls.sql` and `fix_rls.sql` are historical alternatives. Do not run them
+after the versioned sequence: they would replace the reviewed authorization rules.
+The runner targets local PGlite; it is not a command for upgrading a hosted project.
+
+## Hosted rollout prerequisites
+
+Production settings have not been inspected or changed. Stage this sequence on
+an isolated Supabase project before scheduling a production rollout:
+
+1. Back up the existing schema/data and inspect applied policies, users and
+   constraints. Resolve invalid negative values or duplicate message IDs before
+   adding constraints; the migrations do not silently delete customer records.
+2. Register the Firebase project in Supabase Third-Party Auth. Assign the
+   `role: authenticated` Firebase custom claim using trusted Firebase Admin code.
+   Refresh user ID tokens after setting claims. Follow the
+   [official Firebase integration guide](https://supabase.com/docs/guides/auth/third-party/firebase-auth).
+3. Apply the baseline only on a fresh schema. For an existing deployment, compare
+   its schema to the baseline and apply the incremental metadata/authorization
+   scripts through the deployment's reviewed migration process.
+4. Set the trusted project from an administrative SQL connection:
+
+   ```sql
+   INSERT INTO private.app_settings(key,value)
+   VALUES ('firebase_project_id','YOUR_FIREBASE_PROJECT_ID')
+   ON CONFLICT (key) DO UPDATE SET value=excluded.value;
+   ```
+
+   The authorization migration fails closed until this value is configured.
+5. Enable `VITE_SUPABASE_AUTH_MODE=firebase` and provide a public publishable or
+   anon key. The client supplies refreshed Firebase ID tokens to Supabase and
+   refuses missing `authenticated` role claims. It rejects secret/service-role
+   keys in the frontend configuration. Server service-role credentials stay in
+   server-only environment variables.
+6. Test real Alice/Bob accounts: each can create/read/update/delete its own
+   records; cross-user reads/writes and anonymous access fail. Verify Calendar
+   endpoints still access OAuth tokens server-side and browser clients cannot.
+7. Roll out the client and policies together with a documented rollback plan.
+   Disabling Firebase mode does not make old permissive policies safe.
+
+## Authorization model and test scope
+
+`users.firebase_uid` maps a verified Firebase subject to the application's UUID.
+Profile policies require the matching subject. Child records require the owning
+profile. A restrictive policy also requires the configured Firebase issuer and
+audience. `google_integrations` grants neither anonymous nor authenticated client
+access; backend service-role code must verify callers before accessing tokens.
+
+Local PostgreSQL tests exercise repeated migrations, own-profile/goals reads,
+cross-user writes, profile impersonation, foreign-project rejection, anonymous
+access, token-table denial, progress upserts and constraints. The local `auth.jwt`
+helper reads synthetic claims; it does not verify signatures or reproduce the
+Supabase gateway. Hosted integration verification remains required.
 
 ## Data lineage
 
-| Origin | Access module | Tables or destination |
+| Origin | Access module | Destination |
 | --- | --- | --- |
-| Firebase sign-in/profile | `services/repositories/profiles.ts` | `users`, `user_goals` |
-| Workout UI/local progress | `storageService.ts`, `persistenceService.ts`, `syncService.ts`, `repositories/workouts.ts` | localStorage queue, `workout_progress`, `workout_sessions`, `habit_streaks` |
-| Conversation context | `repositories/memories.ts` | `user_memories`, `scheduled_events`; `match_memories` vector search |
-| Chat history | `repositories/messages.ts` | `user_messages` |
-| Inferred onboarding preferences | `repositories/onboarding.ts` | `user_onboarding_state` |
-| Verified Calendar API requests | `api/_lib/verifyFirebaseToken.ts`, `googleAuthService.ts` | Firebase UID → `users.id` → `google_integrations` → Google Calendar |
-
-Network boundary tests exercise mapping, user filters, conflict keys and existing
-error returns using mocked Supabase responses. They do not prove SQL correctness
-or row isolation on a live database.
-
-## Authorization limitations
-
-Several scripts create `USING (true)`/`WITH CHECK (true)` policies. Such policies
-allow broad access through the anon client; application filters by `user_id`
-do not provide database authorization. `enable_rls.sql` assumes Supabase Auth UUIDs,
-while the app signs in through Firebase. Deployments need a verified identity
-bridge or authenticated server data access plus matching restrictive policies.
-
-The server service-role key bypasses RLS. Keep it server-side and verify caller
-identity before selecting a user's records. Google refresh tokens are accessed
-through server endpoints; never add a public policy to expose them. No production
-database policy was applied by this repository change.
+| Firebase profile | `repositories/profiles.ts` | `users`, `user_goals` |
+| Workout/progress | `repositories/workouts.ts`, sync queue | `workout_sessions`, `workout_progress`, `habit_streaks` |
+| Conversation memories | `repositories/memories.ts` | `user_memories`, vector search |
+| Chat | `repositories/messages.ts`, account-scoped local history | `user_messages` |
+| Preferences | `repositories/onboarding.ts` | `user_onboarding_state` |
+| Calendar requests | Firebase verification and Google auth server helpers | `users` → `google_integrations` → Google Calendar |

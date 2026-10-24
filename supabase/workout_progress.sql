@@ -23,6 +23,7 @@ ALTER TABLE workout_progress ENABLE ROW LEVEL SECURITY;
 -- Policy: Allow all operations (using Firebase Auth, not Supabase Auth)
 -- Note: Since Zenfit uses Firebase Auth, auth.uid() is NULL
 -- Security is enforced at application level by passing user_id
+DROP POLICY IF EXISTS "Allow all operations" ON workout_progress;
 CREATE POLICY "Allow all operations" ON workout_progress
     FOR ALL
     USING (true)
