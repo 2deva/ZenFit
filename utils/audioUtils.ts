@@ -48,14 +48,17 @@ export async function decodeAudioData(
   numChannels: number = 1
 ): Promise<AudioBuffer> {
   // PCM 16-bit Little Endian to Float32
-  const dataInt16 = new Int16Array(data.buffer);
-  const frameCount = dataInt16.length / numChannels;
+  if (!Number.isInteger(numChannels) || numChannels < 1 || data.byteLength % (2 * numChannels) !== 0) {
+    throw new RangeError('PCM data must contain complete frames for each channel');
+  }
+  const pcm = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const frameCount = data.byteLength / (2 * numChannels);
   const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
 
   for (let channel = 0; channel < numChannels; channel++) {
     const channelData = buffer.getChannelData(channel);
     for (let i = 0; i < frameCount; i++) {
-      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+      channelData[i] = pcm.getInt16((i * numChannels + channel) * 2, true) / 32768.0;
     }
   }
   return buffer;
@@ -66,7 +69,7 @@ export function createPcmBlob(data: Float32Array): { data: string; mimeType: str
   const int16 = new Int16Array(l);
   for (let i = 0; i < l; i++) {
     // Clamp values
-    let s = Math.max(-1, Math.min(1, data[i]));
+    const s = Math.max(-1, Math.min(1, data[i]));
     int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
   }
   return {
