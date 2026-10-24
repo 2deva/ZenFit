@@ -1,3 +1,4 @@
+import { isRecord } from '../utils/validation';
 /**
  * Live Session Memory Service
  *
@@ -48,7 +49,7 @@ const MEANINGFUL_PATTERNS = {
     preferences: /prefer|like|hate|love|favorite|enjoy|can't stand/i,
     habits: /usually|always|never|morning|evening|routine|habit/i,
     physical: /injury|pain|sore|tired|energy|strong|weak|flexible/i,
-    achievements: /completed|finished|did|achieved|streak|personal best|PR/i,
+    achievements: /\b(?:completed|finished|did|achieved|streaks?|personal best|PR)\b/i,
     emotions: /feel|feeling|stressed|happy|anxious|motivated|frustrated|great/i,
     schedule: /busy|work|job|time|schedule|available|free/i,
     fitness: /weight|reps|sets|minutes|miles|steps|calories/i
@@ -293,15 +294,19 @@ Only include concrete, specific insights. Skip generic greetings.`;
         const responseText = result.candidates?.[0]?.content?.parts?.[0]?.text;
         if (!responseText) return null;
 
-        const parsed = JSON.parse(responseText);
-
+        const parsed: unknown = JSON.parse(responseText);
+        if (!isRecord(parsed)) return null;
+        const strings = (key: string): string[] => Array.isArray(parsed[key])
+            ? parsed[key].filter((value): value is string => typeof value === 'string' && value.trim().length > 0).slice(0, 20).map(value => value.slice(0, 1000))
+            : [];
+        const mood = ['positive', 'neutral', 'challenging'].includes(String(parsed.mood))
+            ? parsed.mood as SessionSummary['mood'] : 'unknown';
         return {
-            userHighlights: parsed.userHighlights || [],
-            aiResponses: [parsed.briefSummary || ''],
-            activitiesCompleted: parsed.activitiesCompleted || [],
-            memorableQuotes: parsed.memorableQuotes || [],
-            mood: parsed.mood || 'unknown',
-            duration
+            userHighlights: strings('userHighlights'),
+            aiResponses: [typeof parsed.briefSummary === 'string' ? parsed.briefSummary.slice(0, 4000) : ''],
+            activitiesCompleted: strings('activitiesCompleted'),
+            memorableQuotes: strings('memorableQuotes'),
+            mood, duration
         };
     } catch (e) {
         console.error('Failed to generate session summary:', e);

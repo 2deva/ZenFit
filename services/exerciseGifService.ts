@@ -19,6 +19,17 @@ interface ExerciseEntry {
     level?: string;
 }
 
+function parseExerciseDatabase(value: unknown): ExerciseEntry[] {
+    if (!Array.isArray(value)) throw new Error('Invalid exercise database');
+    return value.filter((entry): entry is ExerciseEntry => {
+        if (!entry || typeof entry !== 'object') return false;
+        const e = entry as Partial<ExerciseEntry>;
+        return typeof e.id === 'string' && typeof e.name === 'string' && !!e.name.trim()
+            && Array.isArray(e.images) && e.images.every(image => typeof image === 'string'
+                && /^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+$/.test(image));
+    });
+}
+
 let dbCache: ExerciseEntry[] | null = null;
 let fetchPromise: Promise<ExerciseEntry[]> | null = null;
 
@@ -44,7 +55,7 @@ function readPersistedDb(): ExerciseEntry[] | null {
         }
         const isFresh = Date.now() - parsed.timestamp < DB_CACHE_TTL_MS;
         if (!isFresh) return null;
-        return parsed.data;
+        return parseExerciseDatabase(parsed.data);
     } catch {
         return null;
     }
@@ -57,7 +68,7 @@ function readPersistedDbStaleAllowed(): ExerciseEntry[] | null {
         if (!raw) return null;
         const parsed = JSON.parse(raw) as { data?: ExerciseEntry[] };
         if (!Array.isArray(parsed?.data)) return null;
-        return parsed.data;
+        return parseExerciseDatabase(parsed.data);
     } catch {
         return null;
     }
@@ -93,10 +104,10 @@ async function getDatabase(): Promise<ExerciseEntry[]> {
             return res.json();
         })
         .then(data => {
-            dbCache = data;
-            writePersistedDb(data);
+            dbCache = parseExerciseDatabase(data);
+            writePersistedDb(dbCache);
             fetchPromise = null;
-            return data;
+            return dbCache;
         })
         .catch(err => {
             console.error('Error loading exercise database:', err);

@@ -13,6 +13,28 @@ beforeEach(() => {
 });
 
 describe('calendar API boundary', () => {
+  it.each([403, 500])('keeps downstream HTTP %i distinct from an empty calendar', async status => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {}); vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status }));
+    const res = response();
+    await handler({ headers: { authorization: 'Bearer token' }, method: 'GET', query: {} }, res);
+    expect(res.status).toHaveBeenCalledWith(status === 403 ? 403 : 502);
+    expect(res.json).not.toHaveBeenCalledWith({ connected: true, events: [] });
+  });
+  it('returns unavailable on a failed Google request', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {}); vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'));
+    const res = response(); await handler({ headers: { authorization: 'Bearer token' }, method: 'GET', query: {} }, res);
+    expect(res.status).toHaveBeenCalledWith(502);
+  });
+  it('maps verified Google events and reports missing consent', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ items: [{ id: 'event' }] }), { status: 200 }));
+    const res = response(); await handler({ headers: { authorization: 'Bearer token' }, method: 'GET', query: { range: 'today' } }, res);
+    expect(res.json).toHaveBeenCalledWith({ connected: true, events: [{ id: 'event' }] });
+    vi.mocked(getGoogleAccessToken).mockResolvedValue(null); const disconnected = response();
+    await handler({ headers: { authorization: 'Bearer token' }, method: 'GET', query: {} }, disconnected);
+    expect(disconnected.json).toHaveBeenCalledWith({ connected: false, events: [] });
+  });
+
   it('requires authentication', async () => {
     const res = response(); await handler({ headers: {}, method: 'POST', body: {} }, res);
     expect(res.status).toHaveBeenCalledWith(401);

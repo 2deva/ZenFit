@@ -1,254 +1,83 @@
-// Google Calendar Service for Zenfit
-// Fetches user events and creates workout reminders
-
-const CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3';
-
+/** Calendar access preserves connection status so failed requests are not empty calendars. */
 export interface CalendarEvent {
-    id: string;
-    summary: string;
-    start: { dateTime?: string; date?: string };
-    end: { dateTime?: string; date?: string };
-    description?: string;
+  id: string; summary: string;
+  start: { dateTime?: string; date?: string };
+  end: { dateTime?: string; date?: string };
+  description?: string;
+}
+export interface TimeSlot { start: Date; end: Date; available: boolean }
+export interface CalendarSnapshot { status: 'connected' | 'disconnected' | 'unavailable'; events: CalendarEvent[] }
+
+export async function getCalendarSnapshot(maxResults = 10, idToken?: string | null): Promise<CalendarSnapshot> {
+  if (!idToken) return { status: 'disconnected', events: [] };
+  try {
+    const response = await fetch(`/api/google/calendar/events?${new URLSearchParams({ maxResults: String(maxResults), range: 'week' })}`, { headers: { Authorization: `Bearer ${idToken}` } });
+    if (response.status === 401 || response.status === 403) return { status: 'disconnected', events: [] };
+    if (!response.ok) return { status: 'unavailable', events: [] };
+    const data = await response.json();
+    if (data?.connected !== true) return { status: 'disconnected', events: [] };
+    if (!Array.isArray(data.events)) return { status: 'unavailable', events: [] };
+    return { status: 'connected', events: data.events };
+  } catch {
+    return { status: 'unavailable', events: [] };
+  }
 }
 
-export interface TimeSlot {
-    start: Date;
-    end: Date;
-    available: boolean;
+export async function getUpcomingEvents(maxResults = 10, idToken?: string | null): Promise<CalendarEvent[]> {
+  return (await getCalendarSnapshot(maxResults, idToken)).events;
 }
 
-/**
- * Fetch upcoming events from the backend calendar proxy.
- * idToken should be a Firebase ID token for the current user.
- */
-export const getUpcomingEvents = async (maxResults = 10, idToken?: string | null): Promise<CalendarEvent[]> => {
-    if (!idToken) {
-        return [];
-    }
+export async function createCalendarEvent(event: { summary: string; description?: string; start: Date; durationMinutes: number }, idToken?: string | null): Promise<CalendarEvent | null> {
+  if (!idToken || !Number.isFinite(event.start.getTime()) || !Number.isFinite(event.durationMinutes) || event.durationMinutes <= 0 || event.durationMinutes > 1440) return null;
+  try {
+    const response = await fetch('/api/google/calendar/events', { method: 'POST', headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ title: event.summary, description: event.description || 'Created by Zenfit', startIso: event.start.toISOString(), durationMinutes: event.durationMinutes }) });
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data?.connected && data.event ? data.event : null;
+  } catch { return null; }
+}
 
-    try {
-        const res = await fetch(`/api/google/calendar/events?${new URLSearchParams({
-            maxResults: String(maxResults),
-            range: 'week'
-        }).toString()}`, {
-            headers: {
-                Authorization: `Bearer ${idToken}`
-            }
-        });
+function eventTime(value: { dateTime?: string; date?: string }): number {
+  return new Date(value?.dateTime || (value?.date ? `${value.date}T00:00:00` : '')).getTime();
+}
 
-        if (res.status === 401) {
-            // Caller is responsible for refreshing the Firebase token if needed.
-            return [];
-        }
+/** Compute gaps within 06:00–22:00, including events that start on earlier days. */
+export function calculateFreeTimeSlots(date: Date, events: CalendarEvent[]): TimeSlot[] {
+  const start = new Date(date); start.setHours(6, 0, 0, 0);
+  const end = new Date(date); end.setHours(22, 0, 0, 0);
+  if (!Number.isFinite(start.getTime())) return [];
+  const busy = events.map(event => ({ start: eventTime(event.start), end: eventTime(event.end) }))
+    .filter(event => Number.isFinite(event.start) && Number.isFinite(event.end) && event.end > event.start && event.start < end.getTime() && event.end > start.getTime())
+    .map(event => ({ start: Math.max(event.start, start.getTime()), end: Math.min(event.end, end.getTime()) }))
+    .sort((a, b) => a.start - b.start);
+  const slots: TimeSlot[] = []; let cursor = start.getTime();
+  for (const event of busy) {
+    if (event.start - cursor >= 30 * 60000) slots.push({ start: new Date(cursor), end: new Date(event.start), available: true });
+    cursor = Math.max(cursor, event.end);
+  }
+  if (end.getTime() - cursor >= 30 * 60000) slots.push({ start: new Date(cursor), end, available: true });
+  return slots;
+}
 
-        if (!res.ok) {
-            return [];
-        }
-
-        const data = (await res.json()) as { connected: boolean; events: CalendarEvent[] };
-        if (!data.connected) return [];
-        return data.events || [];
-    } catch (e) {
-        console.warn('Calendar fetch failed:', e);
-        return [];
-    }
-};
-
-/**
- * Create a new event via backend calendar proxy.
- */
-export const createCalendarEvent = async (
-    event: {
-        summary: string;
-        description?: string;
-        start: Date;
-        durationMinutes: number;
-    },
-    idToken?: string | null
-): Promise<CalendarEvent | null> => {
-    if (!idToken) {
-        return null;
-    }
-
-    try {
-        const response = await fetch('/api/google/calendar/events', {
-            method: 'POST',
-            headers: {
-                Authorization: `Bearer ${idToken}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                title: event.summary,
-                description: event.description || 'Created by Zenfit',
-                startIso: event.start.toISOString(),
-                durationMinutes: event.durationMinutes
-            })
-        });
-
-        if (response.status === 401 || response.status === 403) {
-            return null;
-        }
-
-        if (!response.ok) {
-            return null;
-        }
-
-        const data = (await response.json()) as { connected: boolean; event?: CalendarEvent };
-        if (!data.connected || !data.event) return null;
-        return data.event;
-    } catch (e) {
-        console.error('Failed to create calendar event:', e);
-        return null;
-    }
-};
-
-/**
- * Analyze calendar to find free time slots
- */
-export const findFreeTimeSlots = async (date: Date, idToken?: string | null): Promise<TimeSlot[]> => {
-    const events = await getUpcomingEvents(50, idToken);
-    if (events.length === 0) {
-        // If no events or no access, return simulated free slots
-        return getDefaultFreeSlots(date);
-    }
-
-    const slots: TimeSlot[] = [];
-    const dayStart = new Date(date);
-    dayStart.setHours(6, 0, 0, 0); // Day starts at 6 AM
-
-    const dayEnd = new Date(date);
-    dayEnd.setHours(22, 0, 0, 0); // Day ends at 10 PM
-
-    // Filter events for the target date
-    const targetDateStr = date.toDateString();
-    const dayEvents = events.filter(e => {
-        const eventDate = new Date(e.start.dateTime || e.start.date || '');
-        return eventDate.toDateString() === targetDateStr;
-    }).sort((a, b) => {
-        const aTime = new Date(a.start.dateTime || a.start.date || '').getTime();
-        const bTime = new Date(b.start.dateTime || b.start.date || '').getTime();
-        return aTime - bTime;
-    });
-
-    // Find gaps between events
-    let currentTime = dayStart;
-    for (const event of dayEvents) {
-        const eventStart = new Date(event.start.dateTime || event.start.date || '');
-        const eventEnd = new Date(event.end.dateTime || event.end.date || '');
-
-        if (currentTime < eventStart) {
-            slots.push({
-                start: new Date(currentTime),
-                end: new Date(eventStart),
-                available: true
-            });
-        }
-        currentTime = eventEnd > currentTime ? eventEnd : currentTime;
-    }
-
-    // Add remaining time until end of day
-    if (currentTime < dayEnd) {
-        slots.push({
-            start: new Date(currentTime),
-            end: dayEnd,
-            available: true
-        });
-    }
-
-    return slots.filter(slot =>
-        (slot.end.getTime() - slot.start.getTime()) >= 30 * 60 * 1000 // At least 30 min
-    );
-};
-
-/**
- * Get default free slots when calendar access is unavailable
- */
-const getDefaultFreeSlots = (date: Date): TimeSlot[] => {
-    const slots: TimeSlot[] = [];
-
-    // Morning slot (6-9 AM)
-    const morning = new Date(date);
-    morning.setHours(6, 0, 0, 0);
-    const morningEnd = new Date(date);
-    morningEnd.setHours(9, 0, 0, 0);
-    slots.push({ start: morning, end: morningEnd, available: true });
-
-    // Lunch slot (12-1 PM)
-    const lunch = new Date(date);
-    lunch.setHours(12, 0, 0, 0);
-    const lunchEnd = new Date(date);
-    lunchEnd.setHours(13, 0, 0, 0);
-    slots.push({ start: lunch, end: lunchEnd, available: true });
-
-    // Evening slot (6-9 PM)
-    const evening = new Date(date);
-    evening.setHours(18, 0, 0, 0);
-    const eveningEnd = new Date(date);
-    eveningEnd.setHours(21, 0, 0, 0);
-    slots.push({ start: evening, end: eveningEnd, available: true });
-
-    return slots;
-};
-
-/**
- * Format a time slot for display
- */
-export const formatTimeSlot = (slot: TimeSlot): string => {
-    const formatTime = (d: Date) => d.toLocaleTimeString('en-US', {
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true
-    });
-    return `${formatTime(slot.start)} - ${formatTime(slot.end)}`;
-};
-
-/**
- * Free slots and next-window summary for nudge context (stick-to-goals).
- * Used to inject "Free today" and "Next free window" into system instruction.
- */
-export const getFreeSlotsContext = async (idToken?: string | null): Promise<{ freeSlotsSummary: string; nextFreeWindow: string }> => {
-    if (!idToken) return { freeSlotsSummary: '', nextFreeWindow: '' };
-
-    try {
-        const today = new Date();
-        const slots = await findFreeTimeSlots(today, idToken);
-        const freeSlotsSummary = slots.length > 0
-            ? slots.map(s => formatTimeSlot(s)).join(', ')
-            : 'No free slots of 30 min or more today.';
-
-        let nextFreeWindow = '';
-        const now = today.getTime();
-        const firstUpcoming = slots.find(s => s.end.getTime() > now);
-        if (firstUpcoming) {
-            nextFreeWindow = formatTimeSlot(firstUpcoming);
-        }
-
-        return { freeSlotsSummary, nextFreeWindow };
-    } catch {
-        return { freeSlotsSummary: '', nextFreeWindow: '' };
-    }
-};
-
-/**
- * Get calendar context for Gemini injection.
- * Distinguishes not-connected from connected-but-no-events so the model can reply appropriately.
- */
-export const getCalendarContext = async (idToken?: string | null): Promise<string> => {
-    if (!idToken) {
-        return 'Calendar: Not connected. The user has not signed in with Google or calendar access is missing. Suggest connecting Google Calendar in settings to view and add events.';
-    }
-
-    const events = await getUpcomingEvents(5, idToken);
-    if (events.length === 0) {
-        return 'Calendar: Connected. No upcoming events in the next 7 days. The user is free to schedule workouts.';
-    }
-
-    let context = 'Calendar: Connected. Upcoming events:\n';
-    events.forEach(event => {
-        const startTime = event.start.dateTime
-            ? new Date(event.start.dateTime).toLocaleString()
-            : event.start.date || 'All day';
-        context += `- ${event.summary} at ${startTime}\n`;
-    });
-    return context;
-};
+export async function findFreeTimeSlots(date: Date, idToken?: string | null): Promise<TimeSlot[]> {
+  const calendar = await getCalendarSnapshot(50, idToken);
+  return calendar.status === 'connected' ? calculateFreeTimeSlots(date, calendar.events) : [];
+}
+export function formatTimeSlot(slot: TimeSlot): string {
+  const format = (date: Date) => date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  return `${format(slot.start)} - ${format(slot.end)}`;
+}
+export async function getFreeSlotsContext(idToken?: string | null): Promise<{ freeSlotsSummary: string; nextFreeWindow: string }> {
+  const calendar = await getCalendarSnapshot(50, idToken);
+  if (calendar.status !== 'connected') return { freeSlotsSummary: '', nextFreeWindow: '' };
+  const today = new Date(); const slots = calculateFreeTimeSlots(today, calendar.events);
+  const upcoming = slots.find(slot => slot.end.getTime() > today.getTime());
+  return { freeSlotsSummary: slots.length ? slots.map(formatTimeSlot).join(', ') : 'No free slots of 30 min or more today.', nextFreeWindow: upcoming ? formatTimeSlot(upcoming) : '' };
+}
+export async function getCalendarContext(idToken?: string | null): Promise<string> {
+  const calendar = await getCalendarSnapshot(5, idToken);
+  if (calendar.status === 'disconnected') return 'Calendar: Not connected. Connect Google Calendar in settings to view availability.';
+  if (calendar.status === 'unavailable') return 'Calendar: Temporarily unavailable. Availability could not be verified.';
+  if (!calendar.events.length) return 'Calendar: Connected. No upcoming events in the next 7 days.';
+  return 'Calendar: Connected. Upcoming events:\n' + calendar.events.map(event => `- ${event.summary} at ${event.start.dateTime ? new Date(event.start.dateTime).toLocaleString() : event.start.date || 'All day'}`).join('\n');
+}
