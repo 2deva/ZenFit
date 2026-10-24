@@ -229,10 +229,13 @@ export function analyzeAudioQuality(
         };
     }
 
+    if (samples.some(sample => !Number.isFinite(sample))) return { ...state, dropoutCount: state.dropoutCount + 1 };
     // Calculate RMS (Root Mean Square) for volume
     let sumSquares = 0;
+    let sum = 0;
     for (let i = 0; i < samples.length; i++) {
         sumSquares += samples[i] * samples[i];
+        sum += samples[i];
     }
     const rms = Math.sqrt(sumSquares / samples.length);
 
@@ -244,7 +247,7 @@ export function analyzeAudioQuality(
     // Estimate noise level (simplistic: high variance = noise)
     let variance = 0;
     for (let i = 0; i < samples.length; i++) {
-        const diff = samples[i] - (sumSquares / samples.length);
+        const diff = samples[i] - (sum / samples.length);
         variance += diff * diff;
     }
     const noiseEstimate = Math.min(1, Math.sqrt(variance / samples.length) * 10);

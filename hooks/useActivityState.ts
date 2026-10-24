@@ -4,133 +4,15 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { getAppState, setAppState, AppState } from '../services/storageService';
+import type { ActivityIntent, ActivityType, ActivitySessionState, ActivityTimerState, ActivityPhase, ActivityPhaseSnapshot, ActivitySession, ActivityTimer, ActivityEvent, StartActivityConfig, TimerState, WorkoutProgress, GeneratedWorkout, UIInteraction } from '../services/activityModel';
+import { getPhaseForElapsed } from '../services/activityModel';
+export type * from '../services/activityModel';
+import { useActivityPersistence } from './useActivityPersistence';
 import { TIMING, NUMBERS } from '../constants/app';
 
 // ---------------------------------------------------------------------------
 // Unified Activity Domain Model
 // ---------------------------------------------------------------------------
-
-export type ActivityIntent =
-    | 'generic_timer'
-    | 'workout'
-    | 'breathing_reset'
-    | 'deep_meditation'
-    | 'sleep_prep'
-    | 'focus_block';
-
-export type ActivityType =
-    | 'timer'
-    | 'workout'
-    | 'breathing'
-    | 'meditation'
-    | 'stretching'
-    | 'custom';
-
-export type ActivitySessionState =
-    | 'idle'
-    | 'configuring'
-    | 'ready'
-    | 'running'
-    | 'paused'
-    | 'completed'
-    | 'stopped';
-
-export type ActivityTimerState = 'idle' | 'running' | 'paused' | 'completed';
-
-export interface ActivityPhase {
-    id: string;
-    kind: 'settle' | 'breath_cycle' | 'body_scan' | 'meditation' | 'closing';
-    durationSeconds: number;
-    order: number;
-}
-
-export interface ActivityPhaseSnapshot {
-    id: string;
-    kind: ActivityPhase['kind'];
-    index: number;
-    elapsedInPhase: number;
-    remainingInPhase: number;
-    totalPhases: number;
-}
-
-export interface ActivitySession {
-    id: string;
-    type: ActivityType;
-    label: string;
-    goalType?: string;
-    goalIds?: string[];
-    intent?: ActivityIntent;
-    phases?: ActivityPhase[];
-    state: ActivitySessionState;
-    createdAt: number;
-    completedAt?: number;
-    // Optional metadata for multi‑segment activities (workouts, intervals)
-    totalSegments?: number;
-    activeSegmentIndex?: number;
-}
-
-export interface ActivityTimer {
-    activityId: string;
-    segmentId?: string;
-    totalSeconds: number;
-    remainingSeconds: number;
-    state: ActivityTimerState;
-    startedAt?: number; // epoch ms
-    pausedAt?: number; // epoch ms
-    remainingAtPause?: number;
-}
-
-export type ActivityEventType = 'started' | 'paused' | 'resumed' | 'completed' | 'tick';
-
-export interface ActivityEvent {
-    type: ActivityEventType;
-    activityId: string;
-    segmentId?: string;
-    session: ActivitySession;
-    timer?: ActivityTimer;
-    phase?: ActivityPhaseSnapshot;
-}
-
-interface TimerState {
-    label: string;
-    totalSeconds: number;
-    remainingSeconds: number;
-    isRunning: boolean;
-    startedAt: number;
-}
-
-interface WorkoutProgress {
-    title: string;
-    exercises: { name: string; completed: boolean }[];
-    startedAt: number;
-}
-
-interface GeneratedWorkout {
-    title: string;
-    exerciseCount: number;
-    generatedAt: number;
-}
-
-interface UIInteraction {
-    type: string;
-    timestamp: number;
-}
-
-export interface StartActivityConfig {
-    type: ActivityType;
-    label: string;
-    totalSeconds: number;
-    goalType?: string;
-    goalIds?: string[];
-    activityId?: string;
-    intent?: ActivityIntent;
-    phases?: ActivityPhase[];
-    workoutMeta?: {
-        totalSegments?: number;
-        initialSegmentIndex?: number;
-    };
-}
 
 interface UseActivityStateReturn {
     // Legacy activity surface (used across the app today)
@@ -172,25 +54,20 @@ export const useActivityState = (): UseActivityStateReturn => {
     const [activitySessions, setActivitySessions] = useState<Record<string, ActivitySession>>({});
     const [activityTimers, setActivityTimers] = useState<Record<string, ActivityTimer>>({});
 
-    const stateSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const activityListenersRef = useRef<Array<(event: ActivityEvent) => void>>([]);
 
     // Helper to emit activity events to all subscribers
     const emitActivityEvent = (event: ActivityEvent) => {
         if (activityListenersRef.current.length === 0) return;
-        // Shallow clone to avoid mutations by listeners
-        const clonedEvent: ActivityEvent = {
-            ...event,
-            session: { ...event.session },
-            timer: event.timer ? { ...event.timer } : undefined
-        };
         activityListenersRef.current.forEach(listener => {
             try {
-                listener(clonedEvent);
-            } catch (e) {
-                // Never let a subscriber break the engine
-
-                console.warn('ActivityEngine listener error', e);
+                listener({ ...event, session: { ...event.session,
+                    goalIds: event.session.goalIds ? [...event.session.goalIds] : undefined,
+                    phases: event.session.phases?.map(phase => ({ ...phase })) },
+                    timer: event.timer ? { ...event.timer } : undefined,
+                    phase: event.phase ? { ...event.phase } : undefined });
+            } catch (error) {
+                console.warn('ActivityEngine listener error', error);
             }
         });
     };
@@ -208,50 +85,12 @@ export const useActivityState = (): UseActivityStateReturn => {
     };
 
     // Compute the current mindful phase from elapsed seconds.
-    const getPhaseForElapsed = (phases: ActivityPhase[], elapsedSeconds: number): ActivityPhaseSnapshot | undefined => {
-        if (!phases.length) return undefined;
-
-        const remaining = Math.max(0, Math.floor(elapsedSeconds));
-        const sorted = [...phases].sort((a, b) => a.order - b.order);
-        let accumulated = 0;
-
-        for (let index = 0; index < sorted.length; index++) {
-            const phase = sorted[index];
-            const phaseStart = accumulated;
-            const phaseEnd = accumulated + phase.durationSeconds;
-
-            if (remaining < phaseEnd || index === sorted.length - 1) {
-                const elapsedInPhase = Math.min(phase.durationSeconds, Math.max(0, remaining - phaseStart));
-                const remainingInPhase = Math.max(0, phase.durationSeconds - elapsedInPhase);
-                return {
-                    id: phase.id,
-                    kind: phase.kind,
-                    index,
-                    elapsedInPhase,
-                    remainingInPhase,
-                    totalPhases: sorted.length
-                };
-            }
-
-            accumulated = phaseEnd;
-        }
-
-        const last = sorted[sorted.length - 1];
-        return {
-            id: last.id,
-            kind: last.kind,
-            index: sorted.length - 1,
-            elapsedInPhase: last.durationSeconds,
-            remainingInPhase: 0,
-            totalPhases: sorted.length
-        };
-    };
-
     // -----------------------------------------------------------------------
     // ActivityEngine API implementations
     // -----------------------------------------------------------------------
 
     const startActivity = (config: StartActivityConfig): string => {
+        if (!Number.isFinite(config.totalSeconds) || config.totalSeconds <= 0 || config.totalSeconds > 86400) throw new RangeError('Activity duration must be between 0 and 86400 seconds');
         const activityId = config.activityId || createActivityId();
         const createdAt = Date.now();
 
@@ -311,7 +150,7 @@ export const useActivityState = (): UseActivityStateReturn => {
     const pauseActivity = (activityId: string) => {
         setActivityTimers(prev => {
             const existing = prev[activityId];
-            if (!existing || existing.state !== 'running' || !existing.startedAt) return prev;
+            if (!existing || existing.state !== 'running' || existing.startedAt === undefined) return prev;
 
             const now = Date.now();
             const elapsed = (now - existing.startedAt) / NUMBERS.MS_TO_SECONDS_DIVISOR;
@@ -428,7 +267,7 @@ export const useActivityState = (): UseActivityStateReturn => {
 
         setActivitySessions(prevSessions => {
             const session = prevSessions[activityId];
-            if (!session) return prevSessions;
+            if (!session || session.state === 'stopped' || session.state === 'completed') return prevSessions;
             const updatedSession: ActivitySession = {
                 ...session,
                 state: 'stopped',
@@ -445,103 +284,7 @@ export const useActivityState = (): UseActivityStateReturn => {
         });
     };
 
-    // Load persisted state on mount
-    useEffect(() => {
-        const savedState = getAppState();
-        if (!savedState) return;
-
-        // Restore timer with smart resumption
-        if (savedState.activeTimer) {
-            let restoredTimer = savedState.activeTimer;
-
-            if (restoredTimer.isRunning) {
-                const elapsedSinceSave = (Date.now() - savedState.timestamp) / NUMBERS.MS_TO_SECONDS_DIVISOR;
-                const newRemaining = Math.max(0, restoredTimer.remainingSeconds - elapsedSinceSave);
-
-                restoredTimer = {
-                    ...restoredTimer,
-                    remainingSeconds: newRemaining,
-                    isRunning: newRemaining > 0
-                };
-            }
-
-            setActiveTimer(restoredTimer);
-
-            // Seed unified ActivityEngine for backward‑compatible timers
-            const activityId = `legacy_timer_${restoredTimer.label || 'timer'}`;
-            const createdAt = savedState.timestamp || Date.now();
-
-            const session: ActivitySession = {
-                id: activityId,
-                type: 'timer',
-                label: restoredTimer.label,
-                state: restoredTimer.isRunning ? 'running' : 'paused',
-                createdAt
-            };
-
-            const timer: ActivityTimer = {
-                activityId,
-                totalSeconds: restoredTimer.totalSeconds,
-                remainingSeconds: restoredTimer.remainingSeconds,
-                state: restoredTimer.isRunning ? 'running' : restoredTimer.remainingSeconds <= 0 ? 'completed' : 'paused',
-                startedAt: restoredTimer.startedAt
-            };
-
-            setActivitySessions(prev => ({ ...prev, [activityId]: session }));
-            setActivityTimers(prev => ({ ...prev, [activityId]: timer }));
-        }
-
-        if (savedState.currentWorkoutProgress) {
-            setCurrentWorkoutProgress(savedState.currentWorkoutProgress);
-        }
-        if (savedState.lastGeneratedWorkout) {
-            setLastGeneratedWorkout(savedState.lastGeneratedWorkout);
-        }
-        if (savedState.recentUIInteractions) {
-            setRecentUIInteractions(savedState.recentUIInteractions);
-        }
-    }, []);
-
-    // Persist state with debouncing
-    useEffect(() => {
-        if (stateSaveTimeoutRef.current) {
-            clearTimeout(stateSaveTimeoutRef.current);
-        }
-
-        stateSaveTimeoutRef.current = setTimeout(() => {
-            const appState: AppState = {
-                activeTimer,
-                currentWorkoutProgress,
-                lastGeneratedWorkout,
-                recentUIInteractions,
-                timestamp: Date.now()
-            };
-            setAppState(appState);
-        }, TIMING.STATE_SAVE_DEBOUNCE);
-
-        return () => {
-            if (stateSaveTimeoutRef.current) {
-                clearTimeout(stateSaveTimeoutRef.current);
-            }
-        };
-    }, [activeTimer, currentWorkoutProgress, lastGeneratedWorkout, recentUIInteractions]);
-
-    // Save state synchronously on beforeunload
-    useEffect(() => {
-        const handleBeforeUnload = () => {
-            const appState: AppState = {
-                activeTimer,
-                currentWorkoutProgress,
-                lastGeneratedWorkout,
-                recentUIInteractions,
-                timestamp: Date.now()
-            };
-            setAppState(appState);
-        };
-
-        window.addEventListener('beforeunload', handleBeforeUnload);
-        return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-    }, [activeTimer, currentWorkoutProgress, lastGeneratedWorkout, recentUIInteractions]);
+    useActivityPersistence({ activeTimer, currentWorkoutProgress, lastGeneratedWorkout, recentUIInteractions, setActiveTimer, setCurrentWorkoutProgress, setLastGeneratedWorkout, setRecentUIInteractions, setActivitySessions, setActivityTimers });
 
     // Helper to add UI interaction
     const addUIInteraction = (type: string) => {
@@ -557,7 +300,7 @@ export const useActivityState = (): UseActivityStateReturn => {
 
     useEffect(() => {
         // Quick check to avoid starting an interval when nothing is running
-        const hasRunningTimers = Object.values(activityTimers).some(t => t.state === 'running' && t.startedAt);
+        const hasRunningTimers = Object.values(activityTimers).some(t => t.state === 'running' && t.startedAt !== undefined);
         if (!hasRunningTimers) {
             return;
         }
@@ -569,7 +312,7 @@ export const useActivityState = (): UseActivityStateReturn => {
                 const nextTimers: Record<string, ActivityTimer> = {};
 
                 Object.entries(prevTimers).forEach(([key, timer]) => {
-                    if (timer.state !== 'running' || !timer.startedAt) {
+                    if (timer.state !== 'running' || timer.startedAt === undefined) {
                         nextTimers[key] = timer;
                         return;
                     }

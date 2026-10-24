@@ -176,21 +176,21 @@ import { SelectionOption, SelectionResult } from '../types';
 export function processVoiceCommand(transcript: string): VoiceCommandResult {
     const normalizedText = transcript.toLowerCase().trim();
 
-    // Check each command's triggers
+    // Specific commands win over short phrases contained inside them.
+    // E.g. "stop workout" must request confirmation, and "go back" must navigate.
+    const matches: Array<{ command: VoiceCommand; trigger: string }> = [];
     for (const command of VOICE_COMMANDS) {
         for (const trigger of command.triggers) {
-            // Match trigger at word boundaries to avoid false positives
-            // e.g., "stop" shouldn't match "stopwatch"
-            const regex = new RegExp(`\\b${escapeRegex(trigger)}\\b`, 'i');
-            if (regex.test(normalizedText)) {
-                return {
-                    command,
-                    action: command.action,
-                    response: command.response || null,
-                    requiresConfirmation: command.requiresConfirmation
-                };
-            }
+            const escaped = escapeRegex(trigger);
+            const regex = new RegExp(`\\b${escaped}\\b`, 'i');
+            const negated = new RegExp(`\\b(?:don't|dont|do not|not)\\s+(?:please\\s+)?${escaped}\\b`, 'i');
+            if (regex.test(normalizedText) && !negated.test(normalizedText)) matches.push({ command, trigger });
         }
+    }
+    matches.sort((a, b) => b.trigger.length - a.trigger.length);
+    if (matches.length) {
+        const { command } = matches[0];
+        return { command, action: command.action, response: command.response || null, requiresConfirmation: command.requiresConfirmation };
     }
 
     return {
@@ -220,7 +220,7 @@ export function processSelection(transcript: string, options: SelectionOption[])
     }
 
     for (let i = 0; i < ordinals.length; i++) {
-        if (text.includes(ordinals[i]) && i < options.length) {
+        if (new RegExp(`\\b${ordinals[i]}\\b`).test(text) && i < options.length) {
             return { selectedId: options[i].id, confidence: 'high' };
         }
     }
@@ -338,7 +338,7 @@ export function pauseActivity(state: ActivityPaceState): ActivityPaceState {
 export function resumeActivity(state: ActivityPaceState): ActivityPaceState {
     if (!state.isPaused) return state;
 
-    const pausedDuration = state.pausedAt ? Date.now() - state.pausedAt : 0;
+    const pausedDuration = state.pausedAt !== undefined ? Date.now() - state.pausedAt : 0;
 
     return {
         ...state,
