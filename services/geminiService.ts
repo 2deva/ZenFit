@@ -1,3 +1,4 @@
+import { describeFitnessSource } from '../utils/fitnessSource';
 import { validateUIProps } from '../utils/validation';
 
 import { Type, FunctionDeclaration } from "@google/genai";
@@ -495,11 +496,7 @@ export async function buildSystemInstruction(context?: UserContext): Promise<str
       systemContext += `\nUser Location Lat/Lng: ${context.location.lat}, ${context.location.lng}`;
     }
     if (context.fitnessStats) {
-      const sourceLabel = context.fitnessStats.connectionStatus === 'disconnected'
-        ? 'Disconnected — reconnect to see real data'
-        : context.fitnessStats.dataSource === 'google_fit'
-          ? 'Connected'
-          : context.fitnessStats.steps > 0 ? 'Connected' : 'Unavailable';
+      const sourceLabel = describeFitnessSource(context.fitnessStats);
       systemContext += `\n\n[REAL-TIME FITNESS DATA DETECTED]
 Steps Today: ${context.fitnessStats.steps} / ${context.fitnessStats.stepsGoal}
 Calories Burned: ${context.fitnessStats.calories}
@@ -653,7 +650,7 @@ export async function runChatWithClient(
 export const sendMessageToGemini = async (history: Message[], text: string, context?: UserContext): Promise<Partial<Message>> => {
   try {
     const systemContext = await buildSystemInstruction(context);
-    return runChatWithClient(ai, history, text, systemContext);
+    return await runChatWithClient(ai, history, text, systemContext);
   } catch (error) {
     console.error("Error calling Gemini API:", error);
     return { text: "I'm focusing my energy on connecting to the server. Can you try that again?" };

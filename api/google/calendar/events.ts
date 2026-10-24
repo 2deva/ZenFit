@@ -46,17 +46,15 @@ async function handleGet(req: any, res: any, userId: string) {
 
     if (resp.status === 403) {
       console.warn('Calendar API 403 in backend: ensure Calendar API is enabled and scopes include calendar.');
-      res.status(200).json({ connected: true, events: [] });
+      res.status(403).json({ connected: false, error: 'Calendar access denied' });
       return;
     }
 
     if (!resp.ok) {
       const body = await resp.text();
       console.error('Calendar GET failed:', resp.status, body);
-      // For robustness in the app UI, treat backend calendar errors as "not connected"
-      // rather than surfacing a 5xx. This keeps the Profile modal and chat tools stable
-      // while still logging the underlying issue for debugging.
-      res.status(200).json({ connected: false, events: [] });
+      // Preserve failure status: an unavailable calendar is not an empty calendar.
+      res.status(502).json({ error: 'Calendar service unavailable' });
       return;
     }
 
@@ -64,9 +62,8 @@ async function handleGet(req: any, res: any, userId: string) {
     res.status(200).json({ connected: true, events: data.items || [] });
   } catch (err) {
     console.error('Calendar GET error:', err);
-    // Same rationale as above: hide transient backend errors from the client
-    // and surface a clean "not connected" state instead of a 500.
-    res.status(200).json({ connected: false, events: [] });
+    // The client can distinguish unavailable data from verified empty results.
+    res.status(502).json({ error: 'Calendar service unavailable' });
   }
 }
 

@@ -1,3 +1,4 @@
+import { getPhaseForElapsed, type ActivityPhaseSnapshot as LocalPhaseSnapshot } from '../../services/activityModel';
 import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '../ui/Button';
 import { Play, Pause, RotateCcw, CheckCircle2, Timer as TimerIcon, Volume2, Mic, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
@@ -86,64 +87,9 @@ export const Timer: React.FC<TimerProps> = ({
   // Derive a simple mindful phase snapshot using the same semantics as
   // ActivityEngine.getPhaseForElapsed, but scoped locally to avoid
   // introducing a hard dependency on the hook internals.
-  type LocalPhase = {
-    id: string;
-    kind: 'settle' | 'breath_cycle' | 'body_scan' | 'meditation' | 'closing';
-    durationSeconds: number;
-    order: number;
-  };
-
-  type LocalPhaseSnapshot = {
-    id: string;
-    kind: LocalPhase['kind'];
-    index: number;
-    elapsedInPhase: number;
-    remainingInPhase: number;
-    totalPhases: number;
-  };
-
-  const getPhaseForElapsed = (phases: LocalPhase[], elapsedSeconds: number): LocalPhaseSnapshot | undefined => {
-    if (!phases.length) return undefined;
-
-    const remaining = Math.max(0, Math.floor(elapsedSeconds));
-    const sorted = [...phases].sort((a, b) => a.order - b.order);
-    let accumulated = 0;
-
-    for (let index = 0; index < sorted.length; index++) {
-      const phase = sorted[index];
-      const phaseStart = accumulated;
-      const phaseEnd = accumulated + phase.durationSeconds;
-
-      if (remaining < phaseEnd || index === sorted.length - 1) {
-        const elapsedInPhase = Math.min(phase.durationSeconds, Math.max(0, remaining - phaseStart));
-        const remainingInPhase = Math.max(0, phase.durationSeconds - elapsedInPhase);
-        return {
-          id: phase.id,
-          kind: phase.kind,
-          index,
-          elapsedInPhase,
-          remainingInPhase,
-          totalPhases: sorted.length
-        };
-      }
-
-      accumulated = phaseEnd;
-    }
-
-    const last = sorted[sorted.length - 1];
-    return {
-      id: last.id,
-      kind: last.kind,
-      index: sorted.length - 1,
-      elapsedInPhase: last.durationSeconds,
-      remainingInPhase: 0,
-      totalPhases: sorted.length
-    };
-  };
-
   const mindfulPhaseSnapshot: LocalPhaseSnapshot | undefined =
     isMindfulSession && owningSession?.phases && durationSeconds
-      ? getPhaseForElapsed(owningSession.phases as any, durationSeconds - timeLeftDisplay)
+      ? getPhaseForElapsed(owningSession.phases, durationSeconds - timeLeftDisplay)
       : undefined;
 
   // Keep completion flag in sync with controlled time.
@@ -371,6 +317,7 @@ export const Timer: React.FC<TimerProps> = ({
                 variant="primary"
                 size="icon"
                 className={`h-11 w-11 sm:h-14 sm:w-14 rounded-xl sm:rounded-2xl transition-all duration-300 ${isActive ? 'shadow-glow-claude' : ''}`}
+                aria-label={isActive ? "Pause timer" : "Start timer"}
                 onClick={toggle}
               >
                 {isActive ? <Pause className="w-5 h-5 sm:w-6 sm:h-6 fill-white" /> : <Play className="w-5 h-5 sm:w-6 sm:h-6 fill-white ml-0.5" />}
@@ -379,7 +326,8 @@ export const Timer: React.FC<TimerProps> = ({
               !isMindfulSession && (
                 <Button
                   className="h-11 sm:h-14 px-6 sm:px-8 rounded-xl sm:rounded-2xl bg-gradient-to-r from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 text-white shadow-lg shadow-green-500/20 text-sm sm:text-base"
-                  onClick={reset}
+                  aria-label="Reset timer"
+                onClick={reset}
                 >
                   {primaryButtonLabel || "Done"}
                 </Button>
@@ -390,6 +338,7 @@ export const Timer: React.FC<TimerProps> = ({
               <Button
                 variant="secondary"
                 size="icon"
+                aria-label="Reset timer"
                 onClick={reset}
                 className="h-11 w-11 sm:h-14 sm:w-14 rounded-xl sm:rounded-2xl"
               >

@@ -1,3 +1,4 @@
+import { describeFitnessSource } from '../utils/fitnessSource';
 import { UserContext } from './geminiService';
 import { getOnboardingState } from './supabaseService';
 import { getFullUserContext, buildLifeContext } from './userContextService';
@@ -97,11 +98,7 @@ INSTRUCTION: Subtly encourage sign-in for personalization and progress tracking 
 
     // Add Fitness Stats (Essential)
     if (context.fitnessStats) {
-        const sourceLabel = context.fitnessStats.connectionStatus === 'disconnected'
-            ? 'Disconnected — reconnect to see real data'
-            : context.fitnessStats.dataSource === 'google_fit'
-                ? 'Connected'
-                : context.fitnessStats.steps > 0 ? 'Connected' : 'Unavailable';
+        const sourceLabel = describeFitnessSource(context.fitnessStats);
         systemContext += `\n\n[REAL-TIME FITNESS DATA DETECTED]
 Steps Today: ${context.fitnessStats.steps} / ${context.fitnessStats.stepsGoal}
 Calories Burned: ${context.fitnessStats.calories}

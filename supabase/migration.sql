@@ -152,10 +152,17 @@ ALTER TABLE nudge_actions ENABLE ROW LEVEL SECURITY;
 
 -- Create policies for public access (using anon key)
 -- Note: In production, these should be more restrictive
+DROP POLICY IF EXISTS "Allow all operations" ON users;
 CREATE POLICY "Allow all operations" ON users FOR ALL USING (true);
+DROP POLICY IF EXISTS "Allow all operations" ON user_goals;
 CREATE POLICY "Allow all operations" ON user_goals FOR ALL USING (true);
+DROP POLICY IF EXISTS "Allow all operations" ON workout_sessions;
 CREATE POLICY "Allow all operations" ON workout_sessions FOR ALL USING (true);
+DROP POLICY IF EXISTS "Allow all operations" ON habit_streaks;
 CREATE POLICY "Allow all operations" ON habit_streaks FOR ALL USING (true);
+DROP POLICY IF EXISTS "Allow all operations" ON user_memories;
 CREATE POLICY "Allow all operations" ON user_memories FOR ALL USING (true);
+DROP POLICY IF EXISTS "Allow all operations" ON scheduled_events;
 CREATE POLICY "Allow all operations" ON scheduled_events FOR ALL USING (true);
+DROP POLICY IF EXISTS "Allow all operations" ON nudge_actions;
 CREATE POLICY "Allow all operations" ON nudge_actions FOR ALL USING (true);

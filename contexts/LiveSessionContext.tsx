@@ -4,7 +4,6 @@ import { useLiveSession } from '../hooks/useLiveSession';
 import { LiveStatus, Message, MessageRole, UIComponentData } from '../types';
 import { TIMING, TEXT, ACTIONS } from '../constants/app';
 import { v4 as uuidv4 } from 'uuid';
-import { setMessages as saveMessages } from '../services/storageService';
 import { refreshContext } from '../services/contextService';
 import { syncWorkoutProgressToCloud } from '../services/persistenceService';
 import { getStreak, getRecentWorkouts } from '../services/supabaseService';
@@ -292,7 +291,6 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                     }
                 }
             }
-            saveMessages(updatedMessages);
             return updatedMessages;
         });
     }, [setMessages, activeWorkoutMessageIdRef, setActiveWorkoutMessageId, currentLiveModelMessageIdRef]);
@@ -974,9 +972,10 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
         if (liveStatus === LiveStatus.CONNECTED && pendingLiveMessageRef.current && sendMessageToLive) {
             const message = pendingLiveMessageRef.current;
             pendingLiveMessageRef.current = null;
-            setTimeout(() => {
+            const timeout = setTimeout(() => {
                 sendMessageToLive(message);
             }, 300);
+            return () => clearTimeout(timeout);
         }
     }, [liveStatus, sendMessageToLive]);
 

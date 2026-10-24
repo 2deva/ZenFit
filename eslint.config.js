@@ -4,7 +4,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 
 export default tseslint.config(
-  { ignores: ['node_modules/**', 'dist/**', 'coverage/**', 'tools/opik-mcp/**'] },
+  { ignores: ['node_modules/**', 'dist*/**', 'coverage/**', 'test-results/**', 'playwright-report/**', 'tools/opik-mcp/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

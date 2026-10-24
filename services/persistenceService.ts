@@ -80,7 +80,7 @@ export const saveGuidanceState = async (
 ): Promise<boolean> => {
   try {
     // Always save to localStorage (Optimistic)
-    setStorageItem(STORAGE_KEYS.GUIDANCE_STATE, state);
+    if (!setStorageItem(STORAGE_KEYS.GUIDANCE_STATE, state)) return false;
 
     // If userId provided, sync to queue for eventual consistency
     if (userId && workoutId) {
@@ -180,8 +180,7 @@ export interface GuidanceExecutorState {
  */
 export const saveGuidanceExecutorState = (state: GuidanceExecutorState): boolean => {
   try {
-    setStorageItem(STORAGE_KEYS.GUIDANCE_EXECUTOR_STATE, state);
-    return true;
+    return setStorageItem(STORAGE_KEYS.GUIDANCE_EXECUTOR_STATE, state);
   } catch (e) {
     console.warn('Failed to save executor state:', e);
     return false;
@@ -230,8 +229,7 @@ export interface WorkoutRefsState {
  */
 export const saveWorkoutRefs = (refs: WorkoutRefsState): boolean => {
   try {
-    setStorageItem(STORAGE_KEYS.WORKOUT_REFS, refs);
-    return true;
+    return setStorageItem(STORAGE_KEYS.WORKOUT_REFS, refs);
   } catch (e) {
     console.warn('Failed to save workout refs:', e);
     return false;
@@ -265,8 +263,7 @@ export interface AutoReconnectState {
  */
 export const saveAutoReconnectState = (state: AutoReconnectState): boolean => {
   try {
-    setStorageItem(STORAGE_KEYS.AUTO_RECONNECT, state);
-    return true;
+    return setStorageItem(STORAGE_KEYS.AUTO_RECONNECT, state);
   } catch (e) {
     console.warn('Failed to save auto-reconnect state:', e);
     return false;

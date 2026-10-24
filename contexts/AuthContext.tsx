@@ -1,10 +1,10 @@
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react';
 import {
     User,
     GoogleAuthProvider,
     signInWithPopup,
     signOut as firebaseSignOut,
-    onAuthStateChanged,
+    onIdTokenChanged,
     getAdditionalUserInfo
 } from 'firebase/auth';
 import { auth, googleProvider } from '../firebaseConfig';
@@ -39,26 +39,21 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const [isNewUser, setIsNewUser] = useState(false);
     const [accessToken, setAccessToken] = useState<string | null>(null);
 
+    const authRevisionRef = useRef(0);
     useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+        const unsubscribe = onIdTokenChanged(auth, async firebaseUser => {
+            const revision = ++authRevisionRef.current;
             setUser(firebaseUser);
-
+            setAccessToken(null);
             if (firebaseUser) {
-                // Get the access token for Google APIs (Calendar, Fit)
                 try {
                     const token = await firebaseUser.getIdToken();
-                    setAccessToken(token);
-                } catch (e) {
-                    console.warn('Failed to get access token', e);
-                }
-            } else {
-                setAccessToken(null);
+                    if (revision === authRevisionRef.current) setAccessToken(token);
+                } catch (error) { console.warn('Failed to get access token', error); }
             }
-
-            setIsLoading(false);
+            if (revision === authRevisionRef.current) setIsLoading(false);
         });
-
-        return () => unsubscribe();
+        return () => { authRevisionRef.current++; unsubscribe(); };
     }, []);
 
     const signInWithGoogle = async () => {

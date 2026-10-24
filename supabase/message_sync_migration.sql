@@ -25,6 +25,7 @@ CREATE INDEX IF NOT EXISTS idx_user_messages_message_id
 ALTER TABLE user_messages ENABLE ROW LEVEL SECURITY;
 
 -- Policy: Users can only access their own messages
+DROP POLICY IF EXISTS "Users can access their own messages" ON user_messages;
 CREATE POLICY "Users can access their own messages" 
   ON user_messages FOR ALL 
   USING (true);

@@ -17,6 +17,25 @@ services:
       API_PROXY_TARGET: http://api:3001
     ports:
       - "127.0.0.1:5173:5173"
+    healthcheck:
+      test: ["CMD", "node", "-e", "Promise.all(['http://127.0.0.1:5173/','http://127.0.0.1:5173/api/health'].map(url=>fetch(url))).then(rs=>process.exit(rs.every(r=>r.ok)?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
     depends_on:
       api:
         condition: service_healthy
+  evaluation:
+    profiles: [evaluation]
+    build: .
+    command: npm run demo
+    environment:
+      EVALUATION_HOST: 0.0.0.0
+      EVALUATION_API_HOST: 0.0.0.0
+    ports:
+      - "127.0.0.1:5174:5174"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5174/api/evaluation/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20

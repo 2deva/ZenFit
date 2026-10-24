@@ -1,0 +1,31 @@
+import { expect, test } from '@playwright/test';
+
+test('evaluates offline replay, row isolation and timer controls without external services', async ({ page }) => {
+  const externalRequests: string[] = [];
+  page.on('request', request => { if (!request.url().startsWith('http://127.0.0.1:5174') && !request.url().startsWith('ws://127.0.0.1:5174')) externalRequests.push(request.url()); });
+  await page.goto('/evaluation.html');
+  await expect(page.getByRole('status').filter({ hasText: 'Ready' })).toContainText('Ready');
+  await page.getByRole('button', { name: 'Go offline', exact: true }).click();
+  await page.getByRole('button', { name: 'Complete 1', exact: true }).click();
+  await expect(page.getByTestId('queued')).toHaveText('1');
+  await expect(page.getByTestId('stored')).toHaveText('0');
+  await page.getByRole('button', { name: 'Go online and sync' }).click();
+  await expect(page.getByTestId('queued')).toHaveText('0');
+  await expect(page.getByTestId('stored')).toHaveText('1');
+  await page.getByLabel('Fixture identity').selectOption('bob');
+  await expect(page.getByTestId('stored')).toHaveText('0');
+  await page.getByLabel('Fixture identity').selectOption('alice');
+  await expect(page.getByTestId('stored')).toHaveText('1');
+  await page.getByLabel('Voice command').fill('stop workout');
+  await expect(page.getByTestId('voice-action')).toHaveText('END_SESSION');
+  await page.getByRole('button', { name: 'Start 5-second reset' }).click();
+  await expect(page.getByTestId('timer-state')).toHaveText('running');
+  await page.getByRole('button', { name: 'Pause', exact: true }).click();
+  await expect(page.getByTestId('timer-state')).toHaveText('paused');
+  const paused = await page.getByTestId('timer').textContent();
+  await page.waitForTimeout(1100);
+  await expect(page.getByTestId('timer')).toHaveText(paused!);
+  await page.getByRole('button', { name: 'Resume', exact: true }).click();
+  await expect(page.getByTestId('timer-state')).toHaveText('completed', { timeout: 7000 });
+  expect(externalRequests).toEqual([]);
+});

@@ -1,24 +1,21 @@
+import { isPublicSupabaseKey, createFirebaseAccessTokenProvider } from './utils/supabaseAuth';
 // Supabase Configuration for Zenfit
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-// Validate Supabase anon key format (should be a JWT starting with 'eyJ')
-const isValidAnonKey = (key: string | undefined): boolean => {
-    if (!key) return false;
-    // Valid Supabase anon keys are JWTs that start with 'eyJ'
-    return key.startsWith('eyJ') && key.length > 100;
-};
-
 // Check if Supabase is properly configured
-export const isSupabaseConfigured = !!(supabaseUrl && isValidAnonKey(supabaseAnonKey));
+export const isSupabaseConfigured = !!(supabaseUrl && isPublicSupabaseKey(supabaseAnonKey));
 
 // Create client only if properly configured, otherwise create a dummy client
 let supabaseClient: SupabaseClient;
 
 if (isSupabaseConfigured) {
     supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
+        ...(import.meta.env.VITE_SUPABASE_AUTH_MODE === 'firebase' ? {
+            accessToken: createFirebaseAccessTokenProvider(async () => (await import('./firebaseConfig')).auth.currentUser)
+        } : {}),
         realtime: {
             params: {
                 eventsPerSecond: 2
@@ -29,7 +26,7 @@ if (isSupabaseConfigured) {
     console.warn(
         '⚠️ Supabase is not properly configured. Please check your .env file.',
         '\n  - VITE_SUPABASE_URL should be your Supabase project URL',
-        '\n  - VITE_SUPABASE_ANON_KEY should be a JWT token starting with "eyJ..."',
+        '\n  - VITE_SUPABASE_ANON_KEY must be a publishable key or an anon-role JWT',
         '\n  You can find these in your Supabase Dashboard > Settings > API'
     );
     // Create a mock client that won't crash but won't work either

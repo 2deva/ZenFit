@@ -1,267 +1,89 @@
-/**
- * useMessages Hook
- * Manages message state, persistence, and synchronization with Supabase
- */
-
+/** Scoped chat history; guest and different account records are never auto-migrated. */
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Message, MessageRole } from '../types';
-import { getMessages as getSupabaseMessages, saveMessage, deleteAllMessages, MessageRecord } from '../services/supabaseService';
-
-import { getMessages as getLocalMessages, setMessages as setLocalMessages } from '../services/storageService';
+import { type Message, MessageRole } from '../types';
+import { getMessages as getCloudMessages, type MessageRecord } from '../services/supabaseService';
+import { getStorageItem, setStorageItem } from '../services/storageService';
+import { messageHistoryKey, mergeMessageHistory } from '../services/messageHistory';
 import { syncService } from '../services/syncService';
 import { supabase, isSupabaseConfigured } from '../supabaseConfig';
-import { STORAGE_KEYS } from '../constants/app';
 
-interface UseMessagesOptions {
-    supabaseUserId: string | null;
-}
-
+interface UseMessagesOptions { supabaseUserId: string | null }
 interface UseMessagesReturn {
-    messages: Message[];
-    setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
-    addMessage: (message: Message) => void;
-    clearMessages: () => Promise<void>;
-    isInitialized: boolean;
+  messages: Message[]; setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
+  addMessage: (message: Message) => void; clearMessages: () => Promise<void>; isInitialized: boolean;
+}
+function fromRecord(record: MessageRecord): Message {
+  return { id: record.message_id, role: record.role as MessageRole, text: record.text, timestamp: record.timestamp,
+    uiComponent: record.ui_component, groundingChunks: record.grounding_chunks,
+    messageContext: record.message_context as Message['messageContext'], relatedWorkoutId: record.related_workout_id };
 }
 
-/**
- * Custom hook for managing messages with automatic persistence
- */
-export const useMessages = ({ supabaseUserId }: UseMessagesOptions): UseMessagesReturn => {
-    const [messages, setMessages] = useState<Message[]>([]);
-    const [isInitialized, setIsInitialized] = useState(false);
-    const savedMessageIdsRef = useRef<Set<string>>(new Set());
-    const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+export function useMessages({ supabaseUserId }: UseMessagesOptions): UseMessagesReturn {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [isInitialized, setIsInitialized] = useState(false);
+  const savedIdsRef = useRef(new Set<string>());
+  const loadedKeyRef = useRef<string | null>(null);
+  const historyKey = messageHistoryKey(supabaseUserId);
 
-    // Load messages on mount
-    useEffect(() => {
-        const loadInitialMessages = async () => {
-            // First, try to load from localStorage (for immediate display)
-            const localMessages = getLocalMessages();
-            if (localMessages.length > 0) {
-                setMessages(localMessages);
-                localMessages.forEach(m => savedMessageIdsRef.current.add(m.id));
-            }
-
-            // Then, if authenticated, load from Supabase
-            if (supabaseUserId) {
-                await loadMessagesFromSupabase();
-            }
-            setIsInitialized(true);
-        };
-
-        loadInitialMessages();
-    }, []);
-
-    // Load messages from Supabase when user ID changes
-    useEffect(() => {
+  useEffect(() => {
+    let active = true; loadedKeyRef.current = null; savedIdsRef.current.clear(); setIsInitialized(false);
+    const stored = getStorageItem<Message[]>(historyKey, []);
+    const local = Array.isArray(stored) ? stored : [];
+    setMessages(local);
+    const load = async () => {
+      try {
         if (supabaseUserId) {
-            setIsInitialized(false);
-            loadMessagesFromSupabase().then(() => setIsInitialized(true));
+          const records = await getCloudMessages(supabaseUserId);
+          if (!active) return;
+          const cloud = records.filter(record => record.message_context !== 'workout_guidance').map(fromRecord);
+          cloud.forEach(message => savedIdsRef.current.add(message.id));
+          setMessages(current => mergeMessageHistory(current, cloud));
         }
-    }, [supabaseUserId]);
+      } catch (error) { console.warn('Could not load cloud messages; retaining local history', error); }
+      if (active) { loadedKeyRef.current = historyKey; setIsInitialized(true); }
+    };
+    void load();
+    return () => { active = false; };
+  }, [supabaseUserId, historyKey]);
 
-    // Set up real-time subscription for cross-device sync
-    useEffect(() => {
-        if (!supabaseUserId || !isSupabaseConfigured) return;
-
-        const channel = supabase
-            .channel(`messages:${supabaseUserId}`)
-            .on('postgres_changes', {
-                event: 'INSERT',
-                schema: 'public',
-                table: 'user_messages',
-                filter: `user_id=eq.${supabaseUserId}`
-            }, (payload: any) => {
-                const newRecord = payload.new;
-
-                // Skip guidance messages from real-time sync - they're local-only
-                if (newRecord.message_context === 'workout_guidance') {
-                    return;
-                }
-
-                savedMessageIdsRef.current.add(newRecord.message_id);
-
-                setMessages(prev => {
-                    if (prev.some(m => m.id === newRecord.message_id)) return prev;
-                    return [...prev, {
-                        id: newRecord.message_id,
-                        role: newRecord.role as MessageRole,
-                        text: newRecord.text,
-                        timestamp: newRecord.timestamp,
-                        uiComponent: newRecord.ui_component,
-                        groundingChunks: newRecord.grounding_chunks,
-                        // Optional fields (may not exist in all deployments)
-                        messageContext: newRecord.message_context,
-                        relatedWorkoutId: newRecord.related_workout_id
-                    }];
-                });
-            })
-            .subscribe((status, err) => {
-                if (err) {
-                    console.error('Supabase realtime subscription error:', err.message);
-                }
-            });
-
-        return () => {
-            supabase.removeChannel(channel).catch(console.error);
-        };
-    }, [supabaseUserId]);
-
-    // Auto-save messages with debouncing
-    useEffect(() => {
-        if (saveTimeoutRef.current) {
-            clearTimeout(saveTimeoutRef.current);
-        }
-
-        saveTimeoutRef.current = setTimeout(async () => {
-            if (messages.length > 0) {
-                // Always save to localStorage
-                setLocalMessages(messages);
-
-                // Save to Supabase (via Sync Queue) if authenticated
-                // IMPORTANT: Guidance messages are local-only and should NOT sync to Supabase
-                if (supabaseUserId) {
-                    const unsavedMessages = messages.filter(msg => !savedMessageIdsRef.current.has(msg.id));
-                    for (const pending of unsavedMessages) {
-                        // Guidance messages are local-only; mark them handled but do not sync.
-                        if (pending.messageContext === 'workout_guidance') {
-                            savedMessageIdsRef.current.add(pending.id);
-                            continue;
-                        }
-
-                        syncService.scheduleOperation('SAVE_MESSAGE', {
-                            userId: supabaseUserId,
-                            message: {
-                                id: pending.id,
-                                role: pending.role,
-                                text: pending.text,
-                                timestamp: pending.timestamp,
-                                uiComponent: pending.uiComponent,
-                                groundingChunks: pending.groundingChunks,
-                                messageContext: pending.messageContext,
-                                relatedWorkoutId: pending.relatedWorkoutId
-                            }
-                        });
-
-                        savedMessageIdsRef.current.add(pending.id);
-                    }
-                }
-            }
-        }, 500); // From constants: TIMING.MESSAGE_SAVE_DEBOUNCE
-
-        return () => {
-            if (saveTimeoutRef.current) {
-                clearTimeout(saveTimeoutRef.current);
-            }
-        };
-    }, [messages, supabaseUserId]);
-
-    // Load messages from Supabase
-    const loadMessagesFromSupabase = async () => {
-        if (!supabaseUserId) return;
-
+  useEffect(() => {
+    if (!isInitialized || loadedKeyRef.current !== historyKey) return;
+    const timer = setTimeout(() => {
+      setStorageItem(historyKey, messages);
+      if (!supabaseUserId) return;
+      for (const message of messages) {
+        if (savedIdsRef.current.has(message.id) || message.messageContext === 'workout_guidance') continue;
         try {
-            const records = await getSupabaseMessages(supabaseUserId);
-            // Filter out guidance messages from cloud - they're local-only ephemeral messages
-            const formattedMessages: Message[] = records
-                .filter((r: MessageRecord & any) => r.message_context !== 'workout_guidance')
-                .reverse()
-                .map((r: MessageRecord & any) => ({
-                    id: r.message_id,
-                    role: r.role as MessageRole,
-                    text: r.text,
-                    timestamp: r.timestamp,
-                    uiComponent: r.ui_component,
-                    groundingChunks: r.grounding_chunks,
-                    // Optional fields (may not exist in all deployments)
-                    messageContext: r.message_context,
-                    relatedWorkoutId: r.related_workout_id
-                }));
+          syncService.scheduleOperation('SAVE_MESSAGE', { userId: supabaseUserId, message: {
+            ...message, role: message.role,
+          } });
+          savedIdsRef.current.add(message.id);
+        } catch (error) { console.warn('Could not persist pending message; retaining it locally', error); }
+      }
+    }, 500);
+    const saveBeforeUnload = () => { setStorageItem(historyKey, messages); };
+    window.addEventListener('beforeunload', saveBeforeUnload);
+    return () => { clearTimeout(timer); window.removeEventListener('beforeunload', saveBeforeUnload); };
+  }, [messages, supabaseUserId, historyKey, isInitialized]);
 
-            formattedMessages.forEach(m => savedMessageIdsRef.current.add(m.id));
+  useEffect(() => {
+    if (!supabaseUserId || !isSupabaseConfigured) return;
+    let active = true;
+    const channel = supabase.channel(`messages:${supabaseUserId}`).on('postgres_changes', {
+      event: 'INSERT', schema: 'public', table: 'user_messages', filter: `user_id=eq.${supabaseUserId}`,
+    }, payload => {
+      const record = payload.new as MessageRecord;
+      if (!active || record.message_context === 'workout_guidance') return;
+      savedIdsRef.current.add(record.message_id);
+      setMessages(current => mergeMessageHistory(current, [fromRecord(record)]));
+    }).subscribe();
+    return () => { active = false; void supabase.removeChannel(channel).catch(console.error); };
+  }, [supabaseUserId]);
 
-            // Smart merge: preserve local UI components if missing from cloud
-            setMessages(prevLocal => {
-                if (formattedMessages.length === 0) {
-                    // No cloud messages, migrate local to cloud
-                    migrateLocalToCloud(prevLocal);
-                    return prevLocal;
-                }
-
-                return formattedMessages.map(cloudMsg => {
-                    const localMsg = prevLocal.find(m => m.id === cloudMsg.id);
-                    if (!localMsg) return cloudMsg;
-
-                    // Preserve local-only fields if cloud doesn't have them. This prevents
-                    // guidance messages (messageContext/relatedWorkoutId) from "leaking"
-                    // into main chat after a refresh when cloud rows are missing those columns.
-                    const merged: Message = {
-                        ...cloudMsg,
-                        uiComponent: cloudMsg.uiComponent || localMsg.uiComponent,
-                        messageContext: cloudMsg.messageContext || localMsg.messageContext,
-                        relatedWorkoutId: cloudMsg.relatedWorkoutId || localMsg.relatedWorkoutId,
-                        groundingChunks: cloudMsg.groundingChunks || localMsg.groundingChunks
-                    };
-                    return merged;
-                });
-            });
-        } catch (error) {
-            console.error('Failed to load messages from Supabase:', error);
-        }
-    };
-
-    // Migrate local messages to Supabase
-    const migrateLocalToCloud = async (localMessages: Message[]) => {
-        if (!supabaseUserId) return;
-
-        for (const msg of localMessages) {
-            // Skip guidance messages - they're local-only and shouldn't sync
-            if (msg.messageContext === 'workout_guidance') {
-                continue;
-            }
-
-            if (!savedMessageIdsRef.current.has(msg.id)) {
-                await saveMessage(supabaseUserId, {
-                    id: msg.id,
-                    role: msg.role as MessageRole,
-                    text: msg.text,
-                    timestamp: msg.timestamp,
-                    uiComponent: msg.uiComponent,
-                    groundingChunks: msg.groundingChunks,
-                    messageContext: msg.messageContext,
-                    relatedWorkoutId: msg.relatedWorkoutId
-                });
-                savedMessageIdsRef.current.add(msg.id);
-            }
-        }
-
-        // Clear localStorage after migration
-        localStorage.removeItem(STORAGE_KEYS.MESSAGES);
-    };
-
-    // Add a new message
-    const addMessage = useCallback((message: Message) => {
-        setMessages(prev => [...prev, message]);
-    }, []);
-
-    // Clear all messages
-    const clearMessages = useCallback(async () => {
-        setMessages([]);
-        savedMessageIdsRef.current.clear();
-        setLocalMessages([]);
-
-        if (supabaseUserId) {
-            // const { syncService } = await import('../services/syncService'); // Using static import
-            syncService.scheduleOperation('DELETE_ALL_DATA', { userId: supabaseUserId });
-        }
-    }, [supabaseUserId]);
-
-    return {
-        messages,
-        setMessages,
-        addMessage,
-        clearMessages,
-        isInitialized
-    };
-};
+  const addMessage = useCallback((message: Message) => setMessages(current => mergeMessageHistory(current, [message])), []);
+  const clearMessages = useCallback(async () => {
+    setMessages([]); savedIdsRef.current.clear(); setStorageItem(historyKey, []);
+    if (supabaseUserId) syncService.scheduleOperation('DELETE_MESSAGES', { userId: supabaseUserId });
+  }, [supabaseUserId, historyKey]);
+  return { messages, setMessages, addMessage, clearMessages, isInitialized };
+}
