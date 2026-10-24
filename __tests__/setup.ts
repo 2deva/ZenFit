@@ -4,9 +4,10 @@ import { afterEach, vi } from 'vitest';
 
 afterEach(() => {
   cleanup();
-  localStorage.clear();
+  if (typeof localStorage !== 'undefined') localStorage.clear();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 // jsdom does not implement viewport scrolling.
-HTMLElement.prototype.scrollIntoView = vi.fn();
+if (typeof HTMLElement !== 'undefined') HTMLElement.prototype.scrollIntoView = vi.fn();

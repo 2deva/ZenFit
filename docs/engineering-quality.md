@@ -1,59 +1,62 @@
-# Engineering quality
+# Engineering quality and evaluation
 
-This update improves reproducible installs, regression tests, automated checks,
-setup documentation, selected architecture boundaries and dependency health.
+`npm run check` runs TypeScript, ESLint, the regression suite with coverage gates,
+and the production build. CI repeats this on Node 22/24, audits dependencies,
+starts Compose services, and runs the isolated walkthrough in Chromium.
 
-## Verification
+## Evidence and scope
 
-`npm run check` runs TypeScript, ESLint, regression tests with coverage gates,
-and the Vite production build. `npm audit --audit-level=high` checks dependencies.
-CI repeats checks on Node 22 and 24 and tests Compose startup. Container checks
-use empty configuration and do not verify hosted integrations.
+The regression suite covers session generation, cue planning/scheduling, live
+connection lifecycle and transcript routing, account-scoped chat storage, token
+refresh races, offline retries, timer controls, Calendar errors, model fallbacks,
+audio resources, and database mapping. Hosted network boundaries are mocked.
+A separate PGlite suite runs real PostgreSQL migrations, constraints, vector
+search and ownership policies with synthetic identities. It does not verify
+Firebase signatures or hosted service settings.
 
-The initial suite has 161 tests across 10 files. Whole-source line coverage is
-approximately 18%; untested files remain in the denominator. Core cue planners
-have about 97% line coverage. The scheduler has 100% coverage. Exact reports are
-produced in `coverage/` and attached to CI runs. Global gates protect the current
-baseline; selected core modules have 50–100% gates. These are not a claim of 50%
-coverage across the app.
+The measured production coverage scope includes services, hooks, utilities, APIs, components,
+contexts and Firebase/Supabase configuration, including untested files. Global
+minimums are 50% lines/statements/functions and 38% branches. Cue planners,
+scheduler and validation have higher gates. Exact counts and percentages are in
+CI coverage artifacts; tests are not a claim that every workflow is verified.
 
-Tests cover duration resolution, builder sessions, mindful phase budgets, workout
-rerenders/empty input, validation of generated UI data, authenticated Calendar
-request boundaries, PCM encoding/view offsets, microphone resource cleanup,
-cancelled/paused cues, and data mapping and failure contracts. Hosted APIs are
-mocked in tests, including database and Calendar calls.
+The [credential-free evaluation](evaluation.md) uses production algorithms and
+an isolated local database. Its browser test checks offline replay, identity
+isolation, timer controls and voice intent, and rejects external requests.
 
-## Structure
+## Structure and behavior
 
-- `services/guidance/*` plans cues by activity. `voiceGuidanceService.ts` retains
-  the public API. `guidanceScheduler.ts` owns pending cue timeouts.
+- `services/guidance/*` plans activity cues; the scheduler owns pending timeouts.
 - `services/repositories/*` groups profile, workout, memory, message and onboarding
-  database operations. `supabaseService.ts` retains the public API and existing
-  return-value contracts.
-- `hooks/useLiveSessionAudio.ts` owns microphone/playback resources. The main
-  Live hook still coordinates the protocol, tools and guidance.
-- `utils/goalType.ts` keeps goal normalization independent of database clients.
-  Pure session generation no longer loads the complete user context service.
+  data access while preserving the public service facade.
+- `services/sync/SyncQueue.ts` separates durable queuing from the Supabase
+  transport. Failed writes remain retryable; deduplication includes identity.
+- `services/activityModel.ts` defines shared phases; `useActivityPersistence.ts`
+  isolates persistence from the clock's transitions and event delivery.
+- `services/context/*` separates movement, schedule and psychological context.
+  Missing or simulated fitness data is not represented as measured history.
+- Live audio resources release before asynchronous logging. Cancelled attempts,
+  rejected SDK promises and old connection events cannot revive a closed session.
+- Message storage is scoped to account identity and preserves unsynced local
+  messages when cloud history arrives. Tool updates use the same persistence owner.
+- Calendar outages stay distinct from verified empty calendars. Async model
+  failures reach chat fallback handling.
 
-## Remaining work
+## Deployment and handover
 
-1. Expand behavioral coverage of Live connection/reconnection, auth, sync replay,
-   Timer interactions and server chat. Increase global coverage gates as this lands.
-2. Split the remaining large Live hook and guidance executor with integration
-   coverage. Several other existing files still exceed 500 lines.
-3. Replace remaining `any` payloads and use explicit data-access error results.
-   The repository refactor intentionally preserves existing null/false/empty
-   fallback contracts so callers do not change behavior unexpectedly.
-4. Address the permissive database policies described in `supabase/README.md`.
-   Browser-provided user IDs do not establish authorization. Production database
-   settings were not inspected or changed by this code-only update.
-5. Move Gemini Live authentication to short-lived tokens/server mediation before
-   treating Gemini keys as private. The current frontend still uses a browser key.
-6. Test database migrations on an isolated Supabase instance. Compose currently
-   uses configured hosted services; it is not a complete offline backend stack.
-7. Profile and split the large production JavaScript bundle. Vite currently warns
-   about its size; no bundle-size warning has been suppressed.
+The [database guide](../supabase/README.md) documents the Firebase identity bridge,
+versioned SQL, preflight data checks and coordinated client/policy rollout. Those
+production settings have not been applied or verified by repository tests.
 
-Further maintenance work should pair behavior changes with regression tests and
-raise coverage gates as additional paths are tested. Contributor history and
-sustained maintenance require ongoing project work.
+The current Gemini Live client still uses a browser API key; short-lived tokens
+or server mediation remain work for a production deployment. Optional tracing
+requires server configuration. External exercise images come from
+[yuhonas/free-exercise-db](https://github.com/yuhonas/free-exercise-db); review the
+upstream terms and asset provenance separately from ownership of application code.
+This update does not change the project's licensing or grant transfer rights.
+
+The main Live hook, guidance executor and some UI files remain large. Additional
+integration coverage should precede further extraction. Several legacy payloads
+still use `any` and null/false fallback results. The production bundle is about
+1.9 MB before compression; the existing Vite size warning remains visible.
+Further work should prioritize real failure cases and keep the coverage gates.

@@ -30,6 +30,12 @@
     "."
   ],
   "exclude": [
-    "tools/opik-mcp"
+    "tools/opik-mcp",
+    "node_modules",
+    "coverage",
+    "dist",
+    "dist-evaluation",
+    "test-results",
+    "playwright-report"
   ]
 }

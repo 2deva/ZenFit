@@ -257,3 +257,9 @@ pnpm-lock.yaml
 
 
 .vercel
+
+# Isolated evaluation build
+dist-evaluation/
+
+test-results/
+playwright-report/

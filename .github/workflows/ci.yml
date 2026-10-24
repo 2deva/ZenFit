@@ -49,9 +49,34 @@ jobs:
         run: |
           curl --fail --retry 10 --retry-connrefused --retry-delay 2 http://localhost:5173/
           curl --fail http://localhost:5173/api/health
+      - name: Start credential-free evaluation
+        run: docker compose --profile evaluation up --build --wait --wait-timeout 180 evaluation
+      - name: Check isolated database and frontend
+        run: |
+          curl --fail http://localhost:5174/api/evaluation/health
+          curl --fail http://localhost:5174/evaluation.html
       - name: Container logs
         if: failure()
         run: docker compose logs
       - name: Stop containers
         if: always()
-        run: docker compose down
+        run: docker compose --profile evaluation down
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Exercise isolated evaluation in the browser
+        run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-failures
+          path: test-results/
+          retention-days: 7

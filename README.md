@@ -6,7 +6,7 @@
 
 Most products try to make planning smarter; ZenFit is built around **re‑entry after failure**. It detects disengagement, lowers activation energy with tiny "re‑start" sessions, and then guides you through them hands‑free so showing up again feels almost inevitable.
 
-Under the hood, ZenFit logs and evaluates real user–agent behavior with **Opik**, so we can measure whether ZenFit is actually reducing friction, repairing streaks, and staying safe—not just sounding supportive. (Details in the Opik section below.)
+Optional **Opik** tracing and evaluation support investigation of user–agent behavior through configured server routes. Clinical outcomes, retention improvements and revenue are not established by the repository. (Details in the Opik section below.)
 
 Built on **Google Gemini 2.5 Flash** and **Gemini Live**, ZenFit turns that behavioral loop into a live, voice‑driven experience with adaptive UI and stateful guidance.
 
@@ -17,7 +17,7 @@ Built on **Google Gemini 2.5 Flash** and **Gemini Live**, ZenFit turns that beha
 1. **Detect disengagement**: Calendar + context notice missed sessions or “I fell off” language.
 2. **Lower the barrier**: ZenFit proposes a tiny, time‑boxed re‑entry (e.g. a 5‑minute reset instead of a full workout).
 3. **Guide the comeback**: During the session, ZenFit talks you through reps, breathing, and rest so you never need to touch your phone.
-4. **Measure & improve**: Each interaction and live session is traced and scored in Opik so we can iterate on behaviors that actually bring people back.
+4. **Measure & improve**: Configured server routes can trace interactions and live sessions in Opik for evaluation; browser fallback requests are not automatically traced.
 
 ---
 
@@ -85,14 +85,25 @@ Fitness happens everywhere—often where Wi-Fi is weak. Zenfit's `SyncService` e
 
 ### 🔒 Security & Privacy
 *   **Auth**: Firebase Authentication (Google Sign-In).
-*   **Data**: Several checked-in SQL scripts use permissive RLS policies. They do not isolate users; see [database security limitations](supabase/README.md#authorization-limitations).
+*   **Data**: Versioned migrations implement Firebase ownership policies and server-only OAuth token access. Hosted deployments require coordinated configuration; see [database rollout prerequisites](supabase/README.md#hosted-rollout-prerequisites).
 *   **AI**: Session context is sent to configured AI services. Review their data settings and retention policies for your deployment.
 
 ---
 
 ## 🚀 Getting Started
 
-### Prerequisites
+### Try the local evaluation first
+
+```bash
+npm ci
+npm run demo
+```
+
+Open http://127.0.0.1:5174/evaluation.html. This exercises real session generation,
+timers, offline sync replay and isolated PostgreSQL policies without credentials.
+See the [walkthrough and browser checks](docs/evaluation.md).
+
+### Prerequisites for the main app
 *   Node.js 22.12+ (see `.nvmrc`)
 *   Google Cloud Project (Gemini API)
 *   Supabase Project
@@ -148,13 +159,12 @@ npm run build
 npm run check
 ```
 
-Tests use local fixtures and mocked network boundaries; no paid API calls or
-credentials are needed. Coverage includes untested source files. Global floors
-start at 18% lines, 17% statements, 16% functions/branches; the session generator,
-cue planners, scheduler and input validation have higher gates. See
+Tests use local fixtures, isolated PostgreSQL, and mocked hosted network boundaries;
+no paid API calls or credentials are needed. Coverage includes untested source
+files. Global and selected core module gates prevent coverage regressions. See
 [engineering quality](docs/engineering-quality.md) for scope and remaining gaps.
 GitHub Actions runs checks on Node 22 and 24 plus container startup tests on
-pushes and pull requests. Dependabot checks npm and Actions dependencies weekly.
+pushes and pull requests, including a Chromium evaluation walkthrough. Dependabot checks npm and Actions dependencies weekly.
 
 ### Container startup
 
