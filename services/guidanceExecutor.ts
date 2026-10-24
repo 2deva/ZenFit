@@ -1,3 +1,4 @@
+import { GuidanceScheduler } from './guidanceScheduler';
 /**
  * Guidance Executor Service
  * 
@@ -46,19 +47,13 @@ export interface GuidanceCallbacks {
     onError?: (error: string) => void;
 }
 
-interface ScheduledCue {
-    cue: GuidanceCue;
-    timerId: NodeJS.Timeout;
-    scheduledFor: number;
-}
-
 // ============================================================================
 // GUIDANCE EXECUTOR CLASS
 // ============================================================================
 
 export class GuidanceExecutor {
     private cues: GuidanceCue[] = [];
-    private scheduledCues: ScheduledCue[] = [];
+    private cueScheduler = new GuidanceScheduler<GuidanceCue>();
     private currentCueIndex: number = 0;
     private currentExerciseIndex: number = 0;
     private startTime: number = 0;
@@ -72,7 +67,7 @@ export class GuidanceExecutor {
     private progressInterval: NodeJS.Timeout | null = null;
     // Short-lived 3‑2‑1‑Go countdown timers, tracked separately so they can be cancelled
     // when the user pauses, skips, goes back, or the session stops/completes.
-    private countdownTimers: NodeJS.Timeout[] = [];
+    private countdownScheduler = new GuidanceScheduler<null>();
     
     // Adaptive pacing for rep-based exercises
     private repTimings: number[] = []; // Store timing between reps
@@ -306,30 +301,7 @@ export class GuidanceExecutor {
             
             // Countdown: 3, 2, 1, Go! - each sent separately with 1 second delay
             this.clearCountdownTimers();
-            this.countdownTimers.push(
-                setTimeout(() => {
-                    if (this.status === 'active') {
-                        this.callbacks?.onCue({ timing: 0, type: 'count', text: '3', priority: 'immediate' }, '3');
-                    }
-                }, 1000),
-                setTimeout(() => {
-                    if (this.status === 'active') {
-                        this.callbacks?.onCue({ timing: 0, type: 'count', text: '2', priority: 'immediate' }, '2');
-                    }
-                }, 2000),
-                setTimeout(() => {
-                    if (this.status === 'active') {
-                        this.callbacks?.onCue({ timing: 0, type: 'count', text: '1', priority: 'immediate' }, '1');
-                    }
-                }, 3000),
-                setTimeout(() => {
-                    if (this.status === 'active') {
-                        this.callbacks?.onCue({ timing: 0, type: 'instruction', text: 'Go!', priority: 'immediate' }, 'Go!');
-                        // Start timer after countdown completes
-                        this.callbacks?.onTimerControl?.('start', this.currentExerciseIndex);
-                    }
-                }, 4000)
-            );
+            this.scheduleCountdown(false);
         }
         
         // Reschedule remaining cues if active
@@ -387,30 +359,7 @@ export class GuidanceExecutor {
             
             // Countdown: 3, 2, 1, Go! - each sent separately with 1 second delay
             this.clearCountdownTimers();
-            this.countdownTimers.push(
-                setTimeout(() => {
-                    if (this.status === 'active') {
-                        this.callbacks?.onCue({ timing: 0, type: 'count', text: '3', priority: 'immediate' }, '3');
-                    }
-                }, 1000),
-                setTimeout(() => {
-                    if (this.status === 'active') {
-                        this.callbacks?.onCue({ timing: 0, type: 'count', text: '2', priority: 'immediate' }, '2');
-                    }
-                }, 2000),
-                setTimeout(() => {
-                    if (this.status === 'active') {
-                        this.callbacks?.onCue({ timing: 0, type: 'count', text: '1', priority: 'immediate' }, '1');
-                    }
-                }, 3000),
-                setTimeout(() => {
-                    if (this.status === 'active') {
-                        this.callbacks?.onCue({ timing: 0, type: 'instruction', text: 'Go!', priority: 'immediate' }, 'Go!');
-                        // Start timer after countdown completes
-                        this.callbacks?.onTimerControl?.('start', this.currentExerciseIndex);
-                    }
-                }, 4000)
-            );
+            this.scheduleCountdown(false);
         }
         
         // Reschedule remaining cues if active
@@ -626,30 +575,7 @@ export class GuidanceExecutor {
         
         // Countdown: 3, 2, 1, Go! - each sent separately with 1 second delay
         this.clearCountdownTimers();
-        this.countdownTimers.push(
-            setTimeout(() => {
-                if (this.status === 'active') {
-                    this.callbacks?.onCue({ timing: 0, type: 'count', text: '3', priority: 'immediate', exerciseIndex: this.currentExerciseIndex }, '3');
-                }
-            }, 1000),
-            setTimeout(() => {
-                if (this.status === 'active') {
-                    this.callbacks?.onCue({ timing: 0, type: 'count', text: '2', priority: 'immediate', exerciseIndex: this.currentExerciseIndex }, '2');
-                }
-            }, 2000),
-            setTimeout(() => {
-                if (this.status === 'active') {
-                    this.callbacks?.onCue({ timing: 0, type: 'count', text: '1', priority: 'immediate', exerciseIndex: this.currentExerciseIndex }, '1');
-                }
-            }, 3000),
-            setTimeout(() => {
-                if (this.status === 'active') {
-                    this.callbacks?.onCue({ timing: 0, type: 'instruction', text: 'Go!', priority: 'immediate', exerciseIndex: this.currentExerciseIndex }, 'Go!');
-                    // Start timer after countdown completes
-                    this.callbacks?.onTimerControl?.('start', this.currentExerciseIndex);
-                }
-            }, 4000)
-        );
+        this.scheduleCountdown(true);
 
         if (this.status === 'active') {
             this.scheduleRemainingCues();
@@ -775,7 +701,7 @@ export class GuidanceExecutor {
     } {
         return {
             currentCueIndex: this.currentCueIndex,
-            scheduledCues: this.scheduledCues.map(sc => ({
+            scheduledCues: this.cueScheduler.pending.map(sc => ({
                 cueIndex: this.cues.indexOf(sc.cue),
                 scheduledFor: sc.scheduledFor
             })),
@@ -818,7 +744,8 @@ export class GuidanceExecutor {
         this.status = state.status;
         
         // Reschedule cues if status was active/paused
-        if (state.status === 'active' || state.status === 'paused') {
+        if (state.status === 'paused') this.pauseTime = Date.now();
+        if (state.status === 'active') {
             // Clear existing scheduled cues
             this.clearScheduledCues();
             
@@ -830,15 +757,9 @@ export class GuidanceExecutor {
                     const delay = scheduledFor - now;
                     
                     if (delay > 0) {
-                        const timerId = setTimeout(() => {
+                        this.cueScheduler.schedule(cue, delay, () => {
                             this.executeCue(cue);
                             this.currentCueIndex = cueIndex + 1;
-                        }, delay);
-                        
-                        this.scheduledCues.push({
-                            cue,
-                            timerId,
-                            scheduledFor
                         });
                     }
                 }
@@ -891,15 +812,9 @@ export class GuidanceExecutor {
             const delay = (cue.timing * this.paceMultiplier) - (now - this.startTime);
             
             if (delay > 0) {
-                const timerId = setTimeout(() => {
+                this.cueScheduler.schedule(cue, delay, () => {
                     this.executeCue(cue);
                     this.currentCueIndex = index + 1;
-                }, delay);
-                
-                this.scheduledCues.push({
-                    cue,
-                    timerId,
-                    scheduledFor: now + delay
                 });
             }
         });
@@ -916,32 +831,39 @@ export class GuidanceExecutor {
             const absoluteIndex = baseCueIndex + relativeIndex;
             
             if (delay > 0) {
-                const timerId = setTimeout(() => {
+                this.cueScheduler.schedule(cue, delay, () => {
                     this.executeCue(cue);
                     const nextIndex = absoluteIndex + 1;
                     if (this.currentCueIndex < nextIndex) {
                         this.currentCueIndex = nextIndex;
                     }
-                }, delay);
-                
-                this.scheduledCues.push({
-                    cue,
-                    timerId,
-                    scheduledFor: now + delay
                 });
             }
         });
     }
 
     private clearScheduledCues(): void {
-        this.scheduledCues.forEach(sc => clearTimeout(sc.timerId));
-        this.scheduledCues = [];
+        this.cueScheduler.cancel();
     }
     
     /** Clear any pending 3‑2‑1‑Go countdown timers */
     private clearCountdownTimers(): void {
-        this.countdownTimers.forEach(id => clearTimeout(id));
-        this.countdownTimers = [];
+        this.countdownScheduler.cancel();
+    }
+
+    private scheduleCountdown(includeExerciseIndex: boolean): void {
+        const exerciseIndex = this.currentExerciseIndex;
+        ['3', '2', '1', 'Go!'].forEach((text, index) => {
+            this.countdownScheduler.schedule(null, (index + 1) * 1000, () => {
+                if (this.status !== 'active' || this.currentExerciseIndex !== exerciseIndex) return;
+                const cue: GuidanceCue = {
+                    timing: 0, type: index === 3 ? 'instruction' : 'count', text, priority: 'immediate',
+                    ...(includeExerciseIndex ? { exerciseIndex } : {})
+                };
+                this.callbacks?.onCue(cue, text);
+                if (index === 3) this.callbacks?.onTimerControl?.('start', exerciseIndex);
+            });
+        });
     }
 
     private getCueIndexAfterExerciseStart(exerciseIndex: number): number {
@@ -987,33 +909,20 @@ export class GuidanceExecutor {
         console.log(`GuidanceExecutor: Rescheduling ${currentExerciseCues.length} cues for current exercise with new pace (ratio: ${paceRatio.toFixed(2)})`);
         
         // Clear existing scheduled cues for current exercise
-        this.scheduledCues = this.scheduledCues.filter(sc => {
-            const isCurrentExerciseCue = sc.cue.exerciseIndex === this.currentExerciseIndex;
-            if (isCurrentExerciseCue) {
-                clearTimeout(sc.timerId);
-                return false; // Remove from array
-            }
-            return true; // Keep other cues
-        });
-        
+        this.cueScheduler.cancel(cue => cue.exerciseIndex === this.currentExerciseIndex);
+
         // Reschedule with adjusted timing
         currentExerciseCues.forEach((cue, relativeIndex) => {
             const originalDelay = (cue.timing * this.paceMultiplier) - elapsed;
             const adjustedDelay = originalDelay * paceRatio;
             
             if (adjustedDelay > 0) {
-                const timerId = setTimeout(() => {
+                this.cueScheduler.schedule(cue, adjustedDelay, () => {
                     this.executeCue(cue);
                     const absoluteIndex = this.cues.indexOf(cue);
                     if (absoluteIndex !== -1) {
                         this.currentCueIndex = absoluteIndex + 1;
                     }
-                }, adjustedDelay);
-                
-                this.scheduledCues.push({
-                    cue,
-                    timerId,
-                    scheduledFor: now + adjustedDelay
                 });
             }
         });
