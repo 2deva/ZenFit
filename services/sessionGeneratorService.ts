@@ -5,7 +5,8 @@
  * Physical workouts are built from the exercise pool (category, equipment, level); see EXERCISE_POOL_ANALYSIS.md.
  */
 
-import { normalizeGoalType, LifeContextGoalType } from './userContextService';
+import { normalizeGoalType } from '../utils/goalType';
+import type { LifeContextGoalType } from '../types';
 
 /** Pool entry shape for filtering; matches exercise DB fields we use. */
 export type PoolEntry = { name: string; category?: string; equipment?: string | null; level?: string };
@@ -90,7 +91,7 @@ function inferDurationMinutesFromText(input?: string): number | undefined {
   return parsed;
 }
 
-function resolveRequestedDurationMinutes(request: PhysicalWorkoutRequest): number {
+export function resolveRequestedDurationMinutes(request: PhysicalWorkoutRequest): number {
   const fromArgs = typeof request.durationMinutes === 'number' ? request.durationMinutes : undefined;
   const fromFocus = inferDurationMinutesFromText(request.focus);
   const fromTitle = inferDurationMinutesFromText(request.title);
@@ -167,7 +168,7 @@ export function generateSessionFromBuilder(
 ): SessionConfig {
   const type = selections.type?.toLowerCase() || selections.focus?.toLowerCase() || '';
   const durationStr = selections.duration || '5';
-  const durationMinutes = parseInt(durationStr) || 5;
+  const durationMinutes = clampDurationMinutes(Number(durationStr));
 
   // Normalize type to determine session type and goal type
   const normalizedType = normalizeGoalType(type);

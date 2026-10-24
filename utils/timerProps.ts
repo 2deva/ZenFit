@@ -18,7 +18,7 @@ export function normalizeTimerProps(
   userMessageHint?: string,
   assistantText?: string
 ): { duration: number; label: string; [k: string]: unknown } {
-  let duration = typeof props.duration === 'number' && props.duration > 0
+  let duration = typeof props.duration === 'number' && Number.isFinite(props.duration) && props.duration > 0 && props.duration <= 86400
     ? props.duration
     : ONE_MIN_SECONDS;
 

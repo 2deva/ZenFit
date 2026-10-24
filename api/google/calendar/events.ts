@@ -1,10 +1,15 @@
+import { isCalendarEventInput } from '../../_lib/calendarValidation.js';
 import { verifyFirebaseToken } from '../../_lib/verifyFirebaseToken.js';
 import { getGoogleAccessToken } from '../../_lib/googleAuthService.js';
 
 const CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3';
 
 async function handleGet(req: any, res: any, userId: string) {
-  const maxResults = parseInt((req.query.maxResults as string) || '10', 10);
+  const maxResults = Number(req.query.maxResults ?? 10);
+  if (!Number.isInteger(maxResults) || maxResults < 1 || maxResults > 250) {
+    res.status(400).json({ error: 'maxResults must be an integer from 1 to 250' });
+    return;
+  }
   const range = (req.query.range as string) || 'week';
 
   const accessToken = await getGoogleAccessToken(userId);
@@ -66,12 +71,11 @@ async function handleGet(req: any, res: any, userId: string) {
 }
 
 async function handlePost(req: any, res: any, userId: string) {
-  const { title, description, startIso, durationMinutes } = (req.body || {}) as {
-    title?: string;
-    description?: string;
-    startIso?: string;
-    durationMinutes?: number;
-  };
+  if (!isCalendarEventInput(req.body ?? {})) {
+    res.status(400).json({ error: 'Invalid calendar event: check title, startIso and durationMinutes' });
+    return;
+  }
+  const { title, description, startIso, durationMinutes } = req.body ?? {};
 
   const accessToken = await getGoogleAccessToken(userId);
   if (!accessToken) {

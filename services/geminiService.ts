@@ -1,3 +1,4 @@
+import { validateUIProps } from '../utils/validation';
 
 import { Type, FunctionDeclaration } from "@google/genai";
 import { MODEL_CHAT, MODEL_FAST, SYSTEM_INSTRUCTION } from "../constants";
@@ -391,7 +392,7 @@ export interface UserContext {
  * Exported for use in both text and voice mode tool handling.
  */
 export const validateUIComponent = (type: string, props: any): boolean => {
-  if (!props) {
+  if (!validateUIProps(type, props).isValid) {
     console.warn(`GeminiService: UI validation failed - props is null/undefined for type '${type}'`);
     return false;
   }
@@ -639,7 +640,7 @@ export async function runChatWithClient(
   const leakMatch = responseText.match(/renderUI\s*\(\s*['"](\w+)['"]\s*,\s*(\{[\s\S]*?\})\s*\)/);
   if (leakMatch && !uiComponent) {
     try {
-      let propsStr = leakMatch[2].replace(/([{,]\s*)'(\w+)'\s*:/g, '$1"$2":').replace(/:\s*'([^']*)'/g, ': "$1"');
+      const propsStr = leakMatch[2].replace(/([{,]\s*)'(\w+)'\s*:/g, '$1"$2":').replace(/:\s*'([^']*)'/g, ': "$1"');
       const props = JSON.parse(propsStr);
       if (validateUIComponent(leakMatch[1], props)) uiComponent = { type: leakMatch[1] as any, props };
       responseText = responseText.replace(leakMatch[0], '');
