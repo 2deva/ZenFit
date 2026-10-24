@@ -167,7 +167,7 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
                 const needsSpace =
                     !/\s/.test(lastChar) &&
                     !/[\s.,!?;:)\]]/.test(firstChar) &&
-                    !/[(\[]/.test(firstChar);
+                    !/[([]/.test(firstChar);
                 modelTranscriptBufferRef.current = existing + (needsSpace ? ' ' : '') + incoming;
             }
 
@@ -187,7 +187,7 @@ export function LiveSessionContextProvider({ children }: { children: ReactNode }
             if (currentLiveModelMessageIdRef.current) {
                 setMessages(prev => prev.map(msg => {
                     if (msg.id === currentLiveModelMessageIdRef.current) {
-                        let updateData: Partial<Message> = { text: modelTranscriptBufferRef.current };
+                        const updateData: Partial<Message> = { text: modelTranscriptBufferRef.current };
                         // Never tag tool-containing messages as guidance (would hide the tool UI).
                         // But do tag normal model transcript messages when we are in (or just finished) guidance.
                         if (shouldRouteAsGuidance && !msg.messageContext && !msg.uiComponent) {

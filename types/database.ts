@@ -210,7 +210,7 @@ export interface Database {
                 };
             };
         };
-        Views: {};
+        Views: Record<string, never>;
         Functions: {
             match_memories: {
                 Args: {
@@ -226,6 +226,6 @@ export interface Database {
                 }[];
             };
         };
-        Enums: {};
+        Enums: Record<string, never>;
     };
 }

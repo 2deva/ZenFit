@@ -307,12 +307,13 @@ export function adjustPace(
                 ...state,
                 currentMultiplier: Math.max(state.currentMultiplier - PACE_STEP, MIN_MULTIPLIER)
             };
-        case 'RESET_PACE':
+        case 'RESET_PACE': {
             const multipliers = { slow: 1.5, normal: 1.0, fast: 0.75 };
             return {
                 ...state,
                 currentMultiplier: multipliers[state.basePace]
             };
+        }
         default:
             return state;
     }

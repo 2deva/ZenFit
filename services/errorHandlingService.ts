@@ -417,7 +417,7 @@ export function generateVerbalFallback(toolName: string, args: any): string {
             }
             return "What would you like to focus on today?";
 
-        case 'dashboard':
+        case 'dashboard': {
             let status = "Here's your progress today: ";
             if (props?.stepsTaken !== undefined && props?.stepsGoal) {
                 status += `${props.stepsTaken} of ${props.stepsGoal} steps. `;
@@ -430,6 +430,7 @@ export function generateVerbalFallback(toolName: string, args: any): string {
             }
             return status || "Let me check your progress...";
 
+        }
         default:
             return `I was going to show you a ${type} but it didn't load. Is there something specific I can help with?`;
     }

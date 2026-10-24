@@ -429,7 +429,7 @@ export const createActionHandlers = (options: ActionHandlersOptions, timerActivi
             let streakCount: number = NUMBERS.DEFAULT_STREAK_COUNT;
             let longestStreak: number = NUMBERS.DEFAULT_STREAK_COUNT;
             let recentWorkouts: any[] = [];
-            let achievements: Array<{ type: string; props: any }> = [];
+            const achievements: Array<{ type: string; props: any }> = [];
 
             if (supabaseUserId) {
                 // Use goalIds from the enriched callback if available (from Timer/WorkoutList props).

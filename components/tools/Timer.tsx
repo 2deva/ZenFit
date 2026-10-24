@@ -105,7 +105,7 @@ export const Timer: React.FC<TimerProps> = ({
   const getPhaseForElapsed = (phases: LocalPhase[], elapsedSeconds: number): LocalPhaseSnapshot | undefined => {
     if (!phases.length) return undefined;
 
-    let remaining = Math.max(0, Math.floor(elapsedSeconds));
+    const remaining = Math.max(0, Math.floor(elapsedSeconds));
     const sorted = [...phases].sort((a, b) => a.order - b.order);
     let accumulated = 0;
 

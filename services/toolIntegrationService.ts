@@ -306,11 +306,12 @@ export async function generateChartProps(
             })
             .reduce((sum, w) => sum + Math.floor((w.duration_seconds || 0) / 60), 0);
           break;
-        case 'streak':
+        case 'streak': {
           // For streak, we need to calculate daily streak value
           const streak = await getStreak(userId, 'workout');
           dayData[dayName] = streak?.current_streak || 0;
           break;
+        }
         default:
           dayData[dayName] = 0;
       }
@@ -444,7 +445,7 @@ export async function generateAchievementBadgeProps(
         }
         break;
 
-      case 'consistency_week':
+      case 'consistency_week': {
         // Check if user completed workouts 5+ days in the last week
         const weekWorkouts = recentWorkouts.filter(w => {
           const workoutDate = new Date(w.created_at);
@@ -465,6 +466,7 @@ export async function generateAchievementBadgeProps(
         }
         break;
 
+      }
       default:
         // Default to current streak if no specific type
         type = 'streak';
