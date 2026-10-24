@@ -220,7 +220,7 @@ class TranscriptBuffer {
 }
 
 // Singleton buffer for current session
-let sessionBuffer = new TranscriptBuffer();
+const sessionBuffer = new TranscriptBuffer();
 
 /**
  * Add a transcript to the current session buffer.

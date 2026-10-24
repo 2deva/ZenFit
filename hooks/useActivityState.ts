@@ -189,7 +189,7 @@ export const useActivityState = (): UseActivityStateReturn => {
                 listener(clonedEvent);
             } catch (e) {
                 // Never let a subscriber break the engine
-                // eslint-disable-next-line no-console
+
                 console.warn('ActivityEngine listener error', e);
             }
         });
@@ -211,7 +211,7 @@ export const useActivityState = (): UseActivityStateReturn => {
     const getPhaseForElapsed = (phases: ActivityPhase[], elapsedSeconds: number): ActivityPhaseSnapshot | undefined => {
         if (!phases.length) return undefined;
 
-        let remaining = Math.max(0, Math.floor(elapsedSeconds));
+        const remaining = Math.max(0, Math.floor(elapsedSeconds));
         const sorted = [...phases].sort((a, b) => a.order - b.order);
         let accumulated = 0;
 

@@ -20,10 +20,10 @@ const getSimulatedStats = (overrides?: Partial<Pick<FitnessStats, 'dataSource' |
   // 1. Base steps: Time dependent (approx 1000 steps per 2 hours awake)
   // Assume waking up at 7AM (25200000ms from midnight)
   const wakeTime = 7 * 60 * 60 * 1000;
-  let activeTime = Math.max(0, msPassed - wakeTime);
+  const activeTime = Math.max(0, msPassed - wakeTime);
 
   // Steps rate: ~800 steps/hour active
-  let baseSteps = Math.floor((activeTime / (1000 * 60 * 60)) * 800);
+  const baseSteps = Math.floor((activeTime / (1000 * 60 * 60)) * 800);
 
   // Add variance based on "User Activity" (random seed per hour)
   const variance = Math.floor(Math.random() * 200);

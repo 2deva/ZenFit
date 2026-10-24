@@ -188,7 +188,7 @@ class SyncService {
                     );
                     return true;
 
-                case 'DELETE_ALL_DATA':
+                case 'DELETE_ALL_DATA': {
                     await supabaseDeleteMessages(op.payload.userId);
                     // Also delete all memory/workout tables manually if not handled by a generic function?
                     // The AppContext logic had multiple deletes.
@@ -203,6 +203,7 @@ class SyncService {
                     await supabase.from('habit_streaks').delete().eq('user_id', userId);
                     return true;
 
+                }
                 default:
                     console.warn('Unknown sync operation type:', op.type);
                     return true; // Drop unknown ops

@@ -1,0 +1,57 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - name: Install from lockfile
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: ESLint
+        run: npm run lint:eslint
+      - name: Tests and coverage gates
+        run: npm run test:coverage
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+      - name: Production build
+        run: npm run build
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-node-${{ matrix.node }}
+          path: coverage/
+          retention-days: 14
+  containers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure empty environment for health checks
+        run: cp .env.example .env.local
+      - name: Build and start containers
+        run: docker compose up --build --wait --wait-timeout 180
+      - name: Check frontend and API health
+        run: |
+          curl --fail --retry 10 --retry-connrefused --retry-delay 2 http://localhost:5173/
+          curl --fail http://localhost:5173/api/health
+      - name: Container logs
+        if: failure()
+        run: docker compose logs
+      - name: Stop containers
+        if: always()
+        run: docker compose down

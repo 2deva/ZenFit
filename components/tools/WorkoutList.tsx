@@ -266,18 +266,6 @@ export const WorkoutList: React.FC<WorkoutListProps> = ({
         return flattened;
     }, [exercises, rounds]);
 
-    if (validExercises.length === 0) {
-        return (
-            <div className="bg-white/90 backdrop-blur-sm rounded-3xl shadow-soft-lg w-full max-w-sm p-6 text-center border border-sand-200 animate-slide-up-fade">
-                <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-claude-50 flex items-center justify-center border border-claude-200">
-                    <Dumbbell className="w-6 h-6 text-claude-500" />
-                </div>
-                <h3 className="font-display font-bold text-ink-800 text-base mb-1">No exercises found</h3>
-                <p className="text-xs text-ink-400 font-body">Ask Zen to generate a workout for you!</p>
-            </div>
-        );
-    }
-
     // Load state from localStorage (synchronous fallback)
     const localStateSync = workoutId ? (() => {
         try {
@@ -636,6 +624,18 @@ export const WorkoutList: React.FC<WorkoutListProps> = ({
     const dashoffset = totalTime > 0 ? circumference - (timeLeft / totalTime) * circumference : 0;
     const allCompleted = validExercises.length > 0 && completed.length === validExercises.length;
     const progressPercent = Math.round((completed.length / validExercises.length) * 100);
+
+    if (validExercises.length === 0) {
+        return (
+            <div className="bg-white/90 backdrop-blur-sm rounded-3xl shadow-soft-lg w-full max-w-sm p-6 text-center border border-sand-200 animate-slide-up-fade">
+                <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-claude-50 flex items-center justify-center border border-claude-200">
+                    <Dumbbell className="w-6 h-6 text-claude-500" />
+                </div>
+                <h3 className="font-display font-bold text-ink-800 text-base mb-1">No exercises found</h3>
+                <p className="text-xs text-ink-400 font-body">Ask Zen to generate a workout for you!</p>
+            </div>
+        );
+    }
 
     return (
         <div className="bg-white/90 backdrop-blur-sm rounded-3xl shadow-soft-lg w-full max-w-sm animate-slide-up-fade overflow-hidden border border-sand-200 flex flex-col transition-all duration-300 max-h-[85vh] sm:max-h-[700px]">

@@ -1,0 +1,7 @@
+{
+  "name": "ZenFit",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+  "forwardPorts": [5173, 3001],
+  "postCreateCommand": "npm ci",
+  "remoteUser": "node"
+}

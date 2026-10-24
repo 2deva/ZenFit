@@ -1,3 +1,5 @@
+import { normalizeGoalType } from '../utils/goalType';
+export { normalizeGoalType } from '../utils/goalType';
 
 /**
  * User Context Service
@@ -45,21 +47,6 @@ export interface UserMemoryContext {
 // ============================================================================
 // LifeContext Helpers: Goal Types, Per-Goal Progress, Movement Baseline
 // ============================================================================
-
-export function normalizeGoalType(rawType: string | null | undefined): LifeContextGoalType {
-    if (!rawType) return 'other';
-    const t = rawType.toLowerCase();
-
-    if (t.includes('strength') || t.includes('muscle') || t.includes('resistance')) return 'strength';
-    if (t.includes('cardio') || t.includes('run') || t.includes('walk') || t.includes('hiit')) return 'cardio';
-    if (t.includes('mobility') || t.includes('flex') || t.includes('yoga') || t.includes('stretch')) return 'mobility';
-    if (t.includes('mind') || t.includes('meditat') || t.includes('focus')) return 'mindfulness';
-    if (t.includes('sleep')) return 'sleep';
-    if (t.includes('stress') || t.includes('anxiety') || t.includes('calm')) return 'stress';
-    if (t.includes('recover') || t.includes('rest')) return 'recovery';
-
-    return 'other';
-}
 
 export function inferTargetFrequency(goal: Pick<LifeContextGoal, 'type'>): number | undefined {
     // Lightweight heuristic based on goal type; can be refined later.
@@ -427,7 +414,7 @@ export async function getPsychologySummary(userId: string | null): Promise<LifeC
             getRecentMemories(userId, 5)
         ]);
 
-        let primaryWhy = onboarding?.primaryMotivation || defaultSummary.primaryWhy;
+        const primaryWhy = onboarding?.primaryMotivation || defaultSummary.primaryWhy;
         const secondaryWhys: string[] = [];
         const riskPatterns: string[] = [];
 
